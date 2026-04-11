@@ -1,4 +1,5 @@
 #include "network_watch/application.hpp"
+#include "network_watch/updater.hpp"
 
 #include <glib-unix.h>
 #include <gtk/gtk.h>
@@ -22,6 +23,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -32,6 +34,86 @@ std::unique_ptr<IMetricsProvider> create_linux_metrics_provider();
 namespace {
 
 constexpr const char* kLatestReleaseUrl = "https://github.com/touchfish1/network-watch/releases/latest";
+
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (char ch : value) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(ch);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+bool run_command_capture(const std::string& command, std::string& output) {
+    FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        return false;
+    }
+
+    output.clear();
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    return pclose(pipe) == 0;
+}
+
+bool download_file_with_curl(const std::string& url, const std::filesystem::path& destination) {
+    std::filesystem::create_directories(destination.parent_path());
+    const std::string command =
+        "curl -fL --connect-timeout 15 --max-time 0 -o " +
+        shell_quote(destination.string()) + " " + shell_quote(url) + " >/dev/null 2>&1";
+    return std::system(command.c_str()) == 0;
+}
+
+struct UpdateCheckResult {
+    enum class Status {
+        UpToDate,
+        Downloaded,
+        Failed,
+    };
+
+    Status status = Status::Failed;
+    ReleaseAssetInfo asset;
+    std::filesystem::path installer_path;
+    std::string message;
+};
+
+UpdateCheckResult check_for_linux_installer_update() {
+    UpdateCheckResult result;
+    std::string body;
+    if (!run_command_capture("curl -fsSL https://api.github.com/repos/touchfish1/network-watch/releases/latest", body)) {
+        result.message = "Failed to fetch latest release metadata";
+        return result;
+    }
+
+    std::string error_message;
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::LinuxInstaller, result.asset, error_message)) {
+        result.message = std::move(error_message);
+        return result;
+    }
+
+    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
+        result.status = UpdateCheckResult::Status::UpToDate;
+        result.message = "Already on the latest version";
+        return result;
+    }
+
+    result.installer_path = std::filesystem::temp_directory_path() / result.asset.asset_name;
+    if (!download_file_with_curl(result.asset.download_url, result.installer_path)) {
+        result.message = "Failed to download the Linux installer package";
+        return result;
+    }
+
+    result.status = UpdateCheckResult::Status::Downloaded;
+    result.message = "Update downloaded";
+    return result;
+}
 
 enum class ChartKind {
     Cpu,
@@ -551,6 +633,129 @@ private:
             current_language() == AppLanguage::SimplifiedChinese
                 ? "已打开最新版本下载页面。"
                 : "Opened the latest release download page.");
+    }
+
+    void set_update_menu_label(const std::string& text, bool enabled) {
+        if (check_updates_item_ != nullptr) {
+            gtk_menu_item_set_label(GTK_MENU_ITEM(check_updates_item_), text.c_str());
+            gtk_widget_set_sensitive(check_updates_item_, enabled);
+        }
+    }
+
+    void begin_update_check() {
+        {
+            std::scoped_lock lock(mutex_);
+            if (update_check_in_progress_) {
+                return;
+            }
+            update_check_in_progress_ = true;
+        }
+
+        set_update_menu_label(
+            current_language() == AppLanguage::SimplifiedChinese ? "检查更新中..." : "Checking for Updates...",
+            false);
+
+        std::thread([this]() {
+            UpdateCheckResult result = check_for_linux_installer_update();
+            {
+                std::scoped_lock lock(mutex_);
+                pending_update_result_ = std::move(result);
+            }
+            g_idle_add(&LinuxTrayAdapter::sync_update_check_on_main, this);
+        }).detach();
+    }
+
+    void handle_update_check_completed() {
+        UpdateCheckResult result;
+        {
+            std::scoped_lock lock(mutex_);
+            update_check_in_progress_ = false;
+            if (!pending_update_result_.has_value()) {
+                return;
+            }
+            result = std::move(*pending_update_result_);
+            pending_update_result_.reset();
+        }
+
+        set_update_menu_label(
+            current_language() == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates",
+            true);
+
+        if (result.status == UpdateCheckResult::Status::UpToDate) {
+            GtkWidget* dialog = gtk_message_dialog_new(
+                window_ != nullptr ? GTK_WINDOW(window_) : nullptr,
+                GTK_DIALOG_MODAL,
+                GTK_MESSAGE_INFO,
+                GTK_BUTTONS_OK,
+                "%s",
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "当前已经是最新版本。"
+                    : "You are already running the latest version.");
+            gtk_dialog_run(GTK_DIALOG(dialog));
+            gtk_widget_destroy(dialog);
+            return;
+        }
+
+        if (result.status == UpdateCheckResult::Status::Failed) {
+            GtkWidget* dialog = gtk_message_dialog_new(
+                window_ != nullptr ? GTK_WINDOW(window_) : nullptr,
+                GTK_DIALOG_MODAL,
+                GTK_MESSAGE_ERROR,
+                GTK_BUTTONS_OK,
+                "%s",
+                (current_language() == AppLanguage::SimplifiedChinese
+                    ? ("检查更新失败：" + result.message)
+                    : ("Failed to check for updates: " + result.message)).c_str());
+            gtk_dialog_run(GTK_DIALOG(dialog));
+            gtk_widget_destroy(dialog);
+            return;
+        }
+
+        GtkWidget* dialog = gtk_message_dialog_new(
+            window_ != nullptr ? GTK_WINDOW(window_) : nullptr,
+            GTK_DIALOG_MODAL,
+            GTK_MESSAGE_QUESTION,
+            GTK_BUTTONS_YES_NO,
+            "%s",
+            (current_language() == AppLanguage::SimplifiedChinese
+                ? ("已下载新版本 " + result.asset.latest_version + "，现在启动安装程序吗？")
+                : ("A new version has been downloaded: " + result.asset.latest_version + ". Launch the installer now?")).c_str());
+        const int response = gtk_dialog_run(GTK_DIALOG(dialog));
+        gtk_widget_destroy(dialog);
+        if (response != GTK_RESPONSE_YES) {
+            return;
+        }
+
+        GError* error = nullptr;
+        gchar* installer_uri = g_filename_to_uri(result.installer_path.string().c_str(), nullptr, &error);
+        if (installer_uri == nullptr || error != nullptr) {
+            if (error != nullptr) {
+                g_error_free(error);
+            }
+            set_status_message(
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "无法启动下载好的安装包。"
+                    : "Failed to launch the downloaded installer.");
+            g_free(installer_uri);
+            return;
+        }
+
+        gtk_show_uri_on_window(
+            window_ != nullptr ? GTK_WINDOW(window_) : nullptr,
+            installer_uri,
+            GDK_CURRENT_TIME,
+            &error);
+        g_free(installer_uri);
+        if (error != nullptr) {
+            g_error_free(error);
+            set_status_message(
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "无法启动下载好的安装包。"
+                    : "Failed to launch the downloaded installer.");
+            return;
+        }
+
+        request_quit();
     }
 
     void set_status_message(const std::string& message) {
@@ -1403,6 +1608,11 @@ private:
         return G_SOURCE_REMOVE;
     }
 
+    static gboolean sync_update_check_on_main(gpointer user_data) {
+        static_cast<LinuxTrayAdapter*>(user_data)->handle_update_check_completed();
+        return G_SOURCE_REMOVE;
+    }
+
     static gboolean quit_on_main(gpointer) {
         gtk_main_quit();
         return G_SOURCE_REMOVE;
@@ -1423,7 +1633,7 @@ private:
     }
 
     static void on_check_updates(GtkMenuItem*, gpointer user_data) {
-        static_cast<LinuxTrayAdapter*>(user_data)->open_update_page();
+        static_cast<LinuxTrayAdapter*>(user_data)->begin_update_check();
     }
 
     static void on_quit(GtkWidget*, gpointer user_data) {
@@ -1597,6 +1807,8 @@ private:
     HistorySnapshot history_ {};
     std::deque<std::string> alert_lines_ {};
     std::optional<TimePoint> last_summary_update_ {};
+    bool update_check_in_progress_ = false;
+    std::optional<UpdateCheckResult> pending_update_result_ {};
 
     AppIndicator* indicator_ = nullptr;
     GtkWidget* menu_ = nullptr;

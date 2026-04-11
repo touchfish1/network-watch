@@ -1,9 +1,12 @@
 #include "network_watch/application.hpp"
+#include "network_watch/updater.hpp"
 
 #import <AppKit/AppKit.h>
 #include <dispatch/dispatch.h>
 
 #include <ctime>
+#include <cstdio>
+#include <filesystem>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -11,12 +14,14 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 namespace network_watch {
 
 std::unique_ptr<IMetricsProvider> create_macos_metrics_provider();
 class MacOSTrayAdapter;
 constexpr const char* kLatestReleaseUrl = "https://github.com/touchfish1/network-watch/releases/latest";
+constexpr const char* kLatestReleaseApiUrl = "https://api.github.com/repos/touchfish1/network-watch/releases/latest";
 
 AppLanguage effective_language(const Settings& settings) {
     return resolve_language(settings);
@@ -86,6 +91,86 @@ std::string build_interfaces_text(const MetricDelta& latest, AppLanguage languag
 
 NSString* to_ns_string(const std::string& value) {
     return [NSString stringWithUTF8String:value.c_str()];
+}
+
+std::string shell_quote(const std::string& value) {
+    std::string quoted = "'";
+    for (char ch : value) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(ch);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+bool run_command_capture(const std::string& command, std::string& output) {
+    FILE* pipe = popen(command.c_str(), "r");
+    if (pipe == nullptr) {
+        return false;
+    }
+
+    output.clear();
+    char buffer[4096];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        output += buffer;
+    }
+
+    return pclose(pipe) == 0;
+}
+
+bool download_file_with_curl(const std::string& url, const std::filesystem::path& destination) {
+    std::filesystem::create_directories(destination.parent_path());
+    const std::string command =
+        "curl -fL --connect-timeout 15 --max-time 0 -o " +
+        shell_quote(destination.string()) + " " + shell_quote(url) + " >/dev/null 2>&1";
+    return std::system(command.c_str()) == 0;
+}
+
+struct UpdateCheckResult {
+    enum class Status {
+        UpToDate,
+        Downloaded,
+        Failed,
+    };
+
+    Status status = Status::Failed;
+    ReleaseAssetInfo asset;
+    std::filesystem::path installer_path;
+    std::string message;
+};
+
+UpdateCheckResult check_for_macos_installer_update() {
+    UpdateCheckResult result;
+    std::string body;
+    if (!run_command_capture("curl -fsSL " + shell_quote(kLatestReleaseApiUrl), body)) {
+        result.message = "Failed to fetch latest release metadata";
+        return result;
+    }
+
+    std::string error_message;
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::MacInstaller, result.asset, error_message)) {
+        result.message = std::move(error_message);
+        return result;
+    }
+
+    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
+        result.status = UpdateCheckResult::Status::UpToDate;
+        result.message = "Already on the latest version";
+        return result;
+    }
+
+    result.installer_path = std::filesystem::temp_directory_path() / result.asset.asset_name;
+    if (!download_file_with_curl(result.asset.download_url, result.installer_path)) {
+        result.message = "Failed to download the macOS installer image";
+        return result;
+    }
+
+    result.status = UpdateCheckResult::Status::Downloaded;
+    result.message = "Update downloaded";
+    return result;
 }
 
 NSTextField* make_label(NSView* parent, NSRect frame, CGFloat font_size, NSFontWeight weight) {
@@ -176,6 +261,7 @@ public:
              keyEquivalent:@""];
         [update_item setTarget:delegate_];
         [menu_ addItem:update_item];
+        update_item_ = update_item;
 
         NSMenuItem* quit_item = [[NSMenuItem alloc]
             initWithTitle:to_ns_string(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit")
@@ -272,6 +358,32 @@ public:
         });
     }
 
+    void begin_update_check() {
+        {
+            std::scoped_lock lock(mutex_);
+            if (update_check_in_progress_) {
+                return;
+            }
+            update_check_in_progress_ = true;
+        }
+
+        if (update_item_ != nil) {
+            [update_item_ setEnabled:NO];
+            [update_item_ setTitle:to_ns_string(current_language() == AppLanguage::SimplifiedChinese ? "检查更新中..." : "Checking for Updates...")];
+        }
+
+        std::thread([this]() {
+            UpdateCheckResult result = check_for_macos_installer_update();
+            {
+                std::scoped_lock lock(mutex_);
+                pending_update_result_ = std::move(result);
+            }
+            dispatch_async(dispatch_get_main_queue(), ^{
+                this->handle_update_check_completed();
+            });
+        }).detach();
+    }
+
     void show_monitor_window() {
         create_monitor_window_if_needed();
         refresh_monitor_window();
@@ -282,6 +394,69 @@ public:
 private:
     AppLanguage current_language() const {
         return effective_language(settings_);
+    }
+
+    void handle_update_check_completed() {
+        UpdateCheckResult result;
+        {
+            std::scoped_lock lock(mutex_);
+            update_check_in_progress_ = false;
+            if (!pending_update_result_.has_value()) {
+                return;
+            }
+            result = std::move(*pending_update_result_);
+            pending_update_result_.reset();
+        }
+
+        if (update_item_ != nil) {
+            [update_item_ setEnabled:YES];
+            [update_item_ setTitle:to_ns_string(current_language() == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates")];
+        }
+
+        NSAlert* alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSAlertStyleInformational];
+        [alert setMessageText:to_ns_string(localized_app_name(current_language()))];
+
+        if (result.status == UpdateCheckResult::Status::UpToDate) {
+            [alert setInformativeText:to_ns_string(
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "当前已经是最新版本。"
+                    : "You are already running the latest version.")];
+            [alert addButtonWithTitle:@"OK"];
+            [alert runModal];
+            return;
+        }
+
+        if (result.status == UpdateCheckResult::Status::Failed) {
+            [alert setAlertStyle:NSAlertStyleWarning];
+            [alert setInformativeText:to_ns_string(
+                (current_language() == AppLanguage::SimplifiedChinese
+                    ? "检查更新失败："
+                    : "Failed to check for updates: ") + result.message)];
+            [alert addButtonWithTitle:@"OK"];
+            [alert runModal];
+            return;
+        }
+
+        [alert setInformativeText:to_ns_string(
+            (current_language() == AppLanguage::SimplifiedChinese
+                ? "已下载新版本 "
+                : "A new version has been downloaded: ") +
+            result.asset.latest_version +
+            (current_language() == AppLanguage::SimplifiedChinese
+                ? "\n现在打开安装镜像并退出当前应用吗？"
+                : "\nOpen the installer image now and quit the current app?"))];
+        [alert addButtonWithTitle:to_ns_string(current_language() == AppLanguage::SimplifiedChinese ? "打开" : "Open")];
+        [alert addButtonWithTitle:to_ns_string(current_language() == AppLanguage::SimplifiedChinese ? "取消" : "Cancel")];
+        if ([alert runModal] != NSAlertFirstButtonReturn) {
+            return;
+        }
+
+        NSURL* installer_url = [NSURL fileURLWithPath:to_ns_string(result.installer_path.string())];
+        if (installer_url != nil) {
+            [[NSWorkspace sharedWorkspace] openURL:installer_url];
+            request_quit();
+        }
     }
 
     void create_monitor_window_if_needed() {
@@ -445,6 +620,7 @@ private:
     NSMenuItem* summary_item_ = nil;
     NSMenuItem* cpu_memory_item_ = nil;
     NSMenuItem* network_item_ = nil;
+    NSMenuItem* update_item_ = nil;
     NSWindow* monitor_window_ = nil;
     NSTextField* summary_label_ = nil;
     NSTextField* updated_label_ = nil;
@@ -455,6 +631,8 @@ private:
     NSTextField* network_label_ = nil;
     NSTextView* interfaces_text_view_ = nil;
     NetworkWatchStatusDelegate* delegate_ = nil;
+    bool update_check_in_progress_ = false;
+    std::optional<UpdateCheckResult> pending_update_result_ {};
     bool initialized_ = false;
 };
 
@@ -531,7 +709,7 @@ int Application::run() {
 - (void)checkUpdates:(id)sender {
     (void)sender;
     if (adapter_ != nullptr) {
-        adapter_->open_update_page();
+        adapter_->begin_update_check();
     }
 }
 
