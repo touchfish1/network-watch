@@ -162,7 +162,7 @@ public:
         tray_icon_.uID = 1;
         tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         tray_icon_.uCallbackMessage = kTrayCallbackMessage;
-        tray_icon_.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+        tray_icon_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
         lstrcpynW(tray_icon_.szTip, L"Network Watch", ARRAYSIZE(tray_icon_.szTip));
 
         if (!Shell_NotifyIconW(NIM_ADD, &tray_icon_)) {
@@ -278,8 +278,8 @@ private:
         host_class.lpfnWndProc = &WindowsTrayAdapter::host_window_proc;
         host_class.hInstance = instance;
         host_class.lpszClassName = kHostWindowClassName;
-        host_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        host_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        host_class.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+        host_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
         RegisterClassExW(&host_class);
 
         WNDCLASSEXW monitor_class {};
@@ -287,8 +287,8 @@ private:
         monitor_class.lpfnWndProc = &WindowsTrayAdapter::monitor_window_proc;
         monitor_class.hInstance = instance;
         monitor_class.lpszClassName = kMonitorWindowClassName;
-        monitor_class.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
-        monitor_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        monitor_class.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+        monitor_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
         monitor_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         RegisterClassExW(&monitor_class);
     }
@@ -373,7 +373,7 @@ private:
         }
 
         tray_icon_.uFlags = NIF_TIP | NIF_ICON;
-        tray_icon_.hIcon = LoadIconW(nullptr, summary.warning ? IDI_WARNING : IDI_APPLICATION);
+        tray_icon_.hIcon = LoadIcon(nullptr, summary.warning ? IDI_WARNING : IDI_APPLICATION);
         const auto tip = truncate_tip(utf8_to_wide(summary.tooltip.empty() ? summary.title : summary.tooltip));
         lstrcpynW(tray_icon_.szTip, tip.empty() ? L"Network Watch" : tip.c_str(), ARRAYSIZE(tray_icon_.szTip));
         Shell_NotifyIconW(NIM_MODIFY, &tray_icon_);

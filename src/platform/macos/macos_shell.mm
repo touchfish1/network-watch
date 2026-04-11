@@ -15,8 +15,7 @@
 namespace network_watch {
 
 std::unique_ptr<IMetricsProvider> create_macos_metrics_provider();
-
-namespace {
+class MacOSTrayAdapter;
 
 std::string format_bytes(double bytes) {
     static const char* units[] = {"B", "KB", "MB", "GB", "TB"};
@@ -90,13 +89,18 @@ NSTextField* make_label(NSView* parent, NSRect frame, CGFloat font_size, NSFontW
     return label;
 }
 
-class MacOSTrayAdapter;
+}  // namespace network_watch
 
-@interface NetworkWatchStatusDelegate : NSObject <NSApplicationDelegate>
+@interface NetworkWatchStatusDelegate : NSObject <NSApplicationDelegate> {
+@private
+    network_watch::MacOSTrayAdapter* adapter_;
+}
 - (instancetype)initWithAdapter:(network_watch::MacOSTrayAdapter*)adapter;
 - (void)openMonitor:(id)sender;
 - (void)quitApp:(id)sender;
 @end
+
+namespace network_watch {
 
 class MacOSTrayAdapter final : public ITrayAdapter {
 public:
@@ -387,34 +391,6 @@ private:
     bool initialized_ = false;
 };
 
-@implementation NetworkWatchStatusDelegate {
-    network_watch::MacOSTrayAdapter* adapter_;
-}
-
-- (instancetype)initWithAdapter:(network_watch::MacOSTrayAdapter*)adapter {
-    self = [super init];
-    if (self != nil) {
-        adapter_ = adapter;
-    }
-    return self;
-}
-
-- (void)openMonitor:(id)sender {
-    (void)sender;
-    if (adapter_ != nullptr) {
-        adapter_->show_monitor_window();
-    }
-}
-
-- (void)quitApp:(id)sender {
-    (void)sender;
-    if (adapter_ != nullptr) {
-        adapter_->request_quit();
-    }
-}
-
-@end
-
 class MacOSNotificationAdapter final : public INotificationAdapter {
 public:
     void notify(const AlertEvent&) override {}
@@ -426,8 +402,6 @@ public:
     bool disable() override { return false; }
     bool is_enabled() const override { return false; }
 };
-
-}  // namespace
 
 PlatformComponents create_platform_components(const Settings&) {
     PlatformComponents components;
@@ -469,3 +443,29 @@ int Application::run() {
 }
 
 }  // namespace network_watch
+
+@implementation NetworkWatchStatusDelegate
+
+- (instancetype)initWithAdapter:(network_watch::MacOSTrayAdapter*)adapter {
+    self = [super init];
+    if (self != nil) {
+        adapter_ = adapter;
+    }
+    return self;
+}
+
+- (void)openMonitor:(id)sender {
+    (void)sender;
+    if (adapter_ != nullptr) {
+        adapter_->show_monitor_window();
+    }
+}
+
+- (void)quitApp:(id)sender {
+    (void)sender;
+    if (adapter_ != nullptr) {
+        adapter_->request_quit();
+    }
+}
+
+@end
