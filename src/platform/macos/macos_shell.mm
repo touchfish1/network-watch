@@ -16,6 +16,7 @@ namespace network_watch {
 
 std::unique_ptr<IMetricsProvider> create_macos_metrics_provider();
 class MacOSTrayAdapter;
+constexpr const char* kLatestReleaseUrl = "https://github.com/touchfish1/network-watch/releases/latest";
 
 AppLanguage effective_language(const Settings& settings) {
     return resolve_language(settings);
@@ -106,6 +107,7 @@ NSTextField* make_label(NSView* parent, NSRect frame, CGFloat font_size, NSFontW
 }
 - (instancetype)initWithAdapter:(network_watch::MacOSTrayAdapter*)adapter;
 - (void)openMonitor:(id)sender;
+- (void)checkUpdates:(id)sender;
 - (void)quitApp:(id)sender;
 @end
 
@@ -167,6 +169,13 @@ public:
              keyEquivalent:@""];
         [open_item setTarget:delegate_];
         [menu_ addItem:open_item];
+
+        NSMenuItem* update_item = [[NSMenuItem alloc]
+            initWithTitle:to_ns_string(language == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates")
+                    action:@selector(checkUpdates:)
+             keyEquivalent:@""];
+        [update_item setTarget:delegate_];
+        [menu_ addItem:update_item];
 
         NSMenuItem* quit_item = [[NSMenuItem alloc]
             initWithTitle:to_ns_string(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit")
@@ -251,6 +260,15 @@ public:
     void request_quit() {
         dispatch_async(dispatch_get_main_queue(), ^{
             [NSApp terminate:nil];
+        });
+    }
+
+    void open_update_page() {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSURL* url = [NSURL URLWithString:to_ns_string(kLatestReleaseUrl)];
+            if (url != nil) {
+                [[NSWorkspace sharedWorkspace] openURL:url];
+            }
         });
     }
 
@@ -507,6 +525,13 @@ int Application::run() {
     (void)sender;
     if (adapter_ != nullptr) {
         adapter_->show_monitor_window();
+    }
+}
+
+- (void)checkUpdates:(id)sender {
+    (void)sender;
+    if (adapter_ != nullptr) {
+        adapter_->open_update_page();
     }
 }
 

@@ -31,6 +31,8 @@ std::unique_ptr<IMetricsProvider> create_linux_metrics_provider();
 
 namespace {
 
+constexpr const char* kLatestReleaseUrl = "https://github.com/touchfish1/network-watch/releases/latest";
+
 enum class ChartKind {
     Cpu,
     Memory,
@@ -530,6 +532,27 @@ private:
         save_settings(config_path_, settings_snapshot());
     }
 
+    void open_update_page() {
+        GError* error = nullptr;
+        gtk_show_uri_on_window(
+            window_ != nullptr ? GTK_WINDOW(window_) : nullptr,
+            kLatestReleaseUrl,
+            GDK_CURRENT_TIME,
+            &error);
+        if (error != nullptr) {
+            set_status_message(
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "无法打开更新页面。"
+                    : "Failed to open the update page.");
+            g_error_free(error);
+            return;
+        }
+        set_status_message(
+            current_language() == AppLanguage::SimplifiedChinese
+                ? "已打开最新版本下载页面。"
+                : "Opened the latest release download page.");
+    }
+
     void set_status_message(const std::string& message) {
         if (settings_status_label_ != nullptr) {
             gtk_label_set_text(GTK_LABEL(settings_status_label_), message.c_str());
@@ -661,6 +684,10 @@ private:
         settings_item_ = gtk_menu_item_new_with_label(language == AppLanguage::SimplifiedChinese ? "打开设置" : "Open Settings");
         g_signal_connect(settings_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_open_settings), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), settings_item_);
+
+        check_updates_item_ = gtk_menu_item_new_with_label(language == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates");
+        g_signal_connect(check_updates_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_check_updates), this);
+        gtk_menu_shell_append(GTK_MENU_SHELL(menu_), check_updates_item_);
 
         notifications_item_ = gtk_check_menu_item_new_with_label(
             language == AppLanguage::SimplifiedChinese ? "启用通知" : "Enable Notifications");
@@ -1395,6 +1422,10 @@ private:
             static_cast<LinuxTrayAdapter*>(user_data)->settings_page_index_);
     }
 
+    static void on_check_updates(GtkMenuItem*, gpointer user_data) {
+        static_cast<LinuxTrayAdapter*>(user_data)->open_update_page();
+    }
+
     static void on_quit(GtkWidget*, gpointer user_data) {
         static_cast<LinuxTrayAdapter*>(user_data)->request_quit();
     }
@@ -1575,6 +1606,7 @@ private:
     GtkWidget* notification_status_item_ = nullptr;
     GtkWidget* open_item_ = nullptr;
     GtkWidget* settings_item_ = nullptr;
+    GtkWidget* check_updates_item_ = nullptr;
     GtkWidget* notifications_item_ = nullptr;
     GtkWidget* snooze_30m_item_ = nullptr;
     GtkWidget* snooze_2h_item_ = nullptr;
