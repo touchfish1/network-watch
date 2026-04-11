@@ -1,0 +1,12 @@
+/build/
+/build-*/
+/.cache/
+/.idea/
+/.vscode/
+*.o
+*.obj
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
