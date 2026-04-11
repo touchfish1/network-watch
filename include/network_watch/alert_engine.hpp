@@ -27,7 +27,7 @@ struct AlertEvent {
 
 class AlertEngine {
 public:
-    explicit AlertEngine(std::vector<AlertRule> rules);
+    explicit AlertEngine(std::vector<AlertRule> rules, AppLanguage language = AppLanguage::English);
 
     std::vector<AlertEvent> evaluate(const MetricDelta& delta);
     const std::vector<AlertRule>& rules() const { return rules_; }
@@ -43,6 +43,7 @@ private:
     std::string build_message(const AlertRule& rule, AlertState state, double value) const;
 
     std::vector<AlertRule> rules_;
+    AppLanguage language_ = AppLanguage::English;
     std::unordered_map<std::string, RuleRuntime> runtime_;
 };
 

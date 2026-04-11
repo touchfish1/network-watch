@@ -17,6 +17,7 @@ endif()
 
 add_library(network_watch_core
     src/core/alert_engine.cpp
+    src/core/i18n.cpp
     src/core/metrics_math.cpp
     src/core/monitor_service.cpp
     src/core/settings.cpp

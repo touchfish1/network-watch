@@ -85,23 +85,14 @@ std::string current_executable_path() {
     return (std::filesystem::current_path() / "network_watch").string();
 }
 
-std::string alert_metric_label(AlertMetric metric) {
-    switch (metric) {
-        case AlertMetric::CpuUsage:
-            return "CPU";
-        case AlertMetric::MemoryUsage:
-            return "Memory";
-        case AlertMetric::DownloadRate:
-            return "Download";
-        case AlertMetric::UploadRate:
-            return "Upload";
-        case AlertMetric::NetworkDisconnected:
-            return "Network";
-    }
-    return "Unknown";
+std::string alert_metric_label(AlertMetric metric, AppLanguage language) {
+    return localized_metric_label(metric, language);
 }
 
-std::string alert_state_label(AlertState state) {
+std::string alert_state_label(AlertState state, AppLanguage language) {
+    if (language == AppLanguage::SimplifiedChinese) {
+        return state == AlertState::Triggered ? "触发" : "恢复";
+    }
     return state == AlertState::Triggered ? "Triggered" : "Recovered";
 }
 
@@ -125,7 +116,7 @@ double threshold_from_display(AlertMetric metric, double display_threshold) {
     }
 }
 
-const char* threshold_unit_label(AlertMetric metric) {
+std::string threshold_unit_label(AlertMetric metric, AppLanguage language) {
     switch (metric) {
         case AlertMetric::CpuUsage:
         case AlertMetric::MemoryUsage:
@@ -134,7 +125,7 @@ const char* threshold_unit_label(AlertMetric metric) {
         case AlertMetric::UploadRate:
             return "MB/s";
         case AlertMetric::NetworkDisconnected:
-            return "state";
+            return language == AppLanguage::SimplifiedChinese ? "状态" : "state";
     }
     return "";
 }
@@ -224,6 +215,7 @@ bool runtime_settings_changed(const Settings& previous, const Settings& current)
 bool settings_equal(const Settings& previous, const Settings& current) {
     return previous.sample_interval == current.sample_interval &&
            previous.tray_refresh_interval == current.tray_refresh_interval &&
+           previous.language == current.language &&
            previous.notifications_enabled == current.notifications_enabled &&
            previous.notification_snooze_until_epoch_seconds == current.notification_snooze_until_epoch_seconds &&
            previous.quiet_hours_enabled == current.quiet_hours_enabled &&
@@ -244,44 +236,46 @@ std::string format_clock_minute(int minute_of_day) {
     return output.str();
 }
 
-std::string notification_status_text(const Settings& settings) {
+std::string notification_status_text(const Settings& settings, AppLanguage language) {
+    const bool zh = language == AppLanguage::SimplifiedChinese;
     if (!settings.notifications_enabled) {
-        return "Desktop notifications are disabled.";
+        return zh ? "桌面通知已关闭。" : "Desktop notifications are disabled.";
     }
     if (settings.notification_snooze_until_epoch_seconds.has_value()) {
         const auto now = std::chrono::system_clock::now();
         const auto snooze_until = std::chrono::system_clock::time_point(
             std::chrono::seconds(*settings.notification_snooze_until_epoch_seconds));
         if (now < snooze_until) {
-            return "Desktop notifications snoozed until " +
+            return (zh ? "桌面通知已静音至 " : "Desktop notifications snoozed until ") +
                 format_epoch_seconds(*settings.notification_snooze_until_epoch_seconds) + ".";
         }
     }
     if (quiet_hours_active(settings, std::chrono::system_clock::now())) {
-        return "Desktop notifications paused by quiet hours (" +
+        return (zh ? "桌面通知已被免打扰时段暂停（" : "Desktop notifications paused by quiet hours (") +
             format_clock_minute(settings.quiet_hours_start_minute) + "-" +
-            format_clock_minute(settings.quiet_hours_end_minute) + ").";
+            format_clock_minute(settings.quiet_hours_end_minute) + (zh ? "）。" : ").");
     }
     if (settings.quiet_hours_enabled) {
-        return "Desktop notifications are active. Quiet hours: " +
+        return (zh ? "桌面通知已启用。免打扰时段：" : "Desktop notifications are active. Quiet hours: ") +
             format_clock_minute(settings.quiet_hours_start_minute) + "-" +
             format_clock_minute(settings.quiet_hours_end_minute) + ".";
     }
-    return "Desktop notifications are active.";
+    return zh ? "桌面通知已启用。" : "Desktop notifications are active.";
 }
 
-std::string rule_notification_status_text(const AlertRule& rule) {
+std::string rule_notification_status_text(const AlertRule& rule, AppLanguage language) {
+    const bool zh = language == AppLanguage::SimplifiedChinese;
     if (!rule.notification_snooze_until_epoch_seconds.has_value()) {
-        return "Notify";
+        return zh ? "通知" : "Notify";
     }
 
     const auto now = std::chrono::system_clock::now();
     const auto snooze_until = std::chrono::system_clock::time_point(
         std::chrono::seconds(*rule.notification_snooze_until_epoch_seconds));
     if (now >= snooze_until) {
-        return "Resume";
+        return zh ? "恢复" : "Resume";
     }
-    return "Muted until " + format_epoch_seconds(*rule.notification_snooze_until_epoch_seconds);
+    return (zh ? "静音至 " : "Muted until ") + format_epoch_seconds(*rule.notification_snooze_until_epoch_seconds);
 }
 
 class LinuxAutostartAdapter final : public IAutostartAdapter {
@@ -428,7 +422,7 @@ public:
 
             if (!last_summary_update_.has_value() ||
                 (latest.timestamp - *last_summary_update_) >= settings_.tray_refresh_interval) {
-                summary_ = build_tray_summary(latest);
+                summary_ = build_tray_summary(latest, resolve_language(settings_));
                 last_summary_update_ = latest.timestamp;
                 summary = summary_;
                 update_summary_now = true;
@@ -473,8 +467,8 @@ public:
 
             std::ostringstream line;
             line << "[" << format_timestamp(event.timestamp) << "] "
-                 << alert_state_label(event.state) << " "
-                 << alert_metric_label(event.metric) << ": "
+                 << alert_state_label(event.state, current_language()) << " "
+                 << alert_metric_label(event.metric, current_language()) << ": "
                  << event.message;
             alert_lines_.push_front(line.str());
 
@@ -518,6 +512,20 @@ private:
         return settings_;
     }
 
+    AppLanguage current_language() const {
+        return resolve_language(settings_snapshot());
+    }
+
+    std::string text_waiting_for_metrics() const {
+        return current_language() == AppLanguage::SimplifiedChinese
+            ? "等待第一批指标采样..."
+            : "Waiting for the first metrics sample...";
+    }
+
+    std::string text_last_updated_prefix() const {
+        return current_language() == AppLanguage::SimplifiedChinese ? "最近更新：" : "Last updated: ";
+    }
+
     void persist_settings() {
         save_settings(config_path_, settings_snapshot());
     }
@@ -540,15 +548,18 @@ private:
             gtk_widget_set_sensitive(apply_settings_button_, settings_form_is_dirty());
         }
         if (settings_dirty_label_ != nullptr) {
+            const bool zh = current_language() == AppLanguage::SimplifiedChinese;
             gtk_label_set_text(
                 GTK_LABEL(settings_dirty_label_),
-                settings_form_is_dirty() ? "Unsaved changes in settings form." : "All settings changes are saved.");
+                settings_form_is_dirty()
+                    ? (zh ? "设置表单中有未保存的更改。" : "Unsaved changes in settings form.")
+                    : (zh ? "所有设置更改都已保存。" : "All settings changes are saved."));
         }
     }
 
     void sync_notification_controls() {
         const auto settings = settings_snapshot();
-        const auto status = notification_status_text(settings);
+        const auto status = notification_status_text(settings, current_language());
 
         if (notification_status_item_ != nullptr) {
             gtk_menu_item_set_label(GTK_MENU_ITEM(notification_status_item_), status.c_str());
@@ -575,7 +586,7 @@ private:
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(editor.sustain), static_cast<double>(rule.sustain_for.count()));
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(editor.cooldown), static_cast<double>(rule.cooldown_for.count()));
         if (editor.notify_button != nullptr) {
-            gtk_button_set_label(GTK_BUTTON(editor.notify_button), rule_notification_status_text(rule).c_str());
+            gtk_button_set_label(GTK_BUTTON(editor.notify_button), rule_notification_status_text(rule, current_language()).c_str());
         }
     }
 
@@ -599,77 +610,87 @@ private:
     }
 
     void create_indicator() {
+        const auto language = current_language();
         indicator_ = app_indicator_new(
             "network_watch",
             "network-transmit-receive-symbolic",
             APP_INDICATOR_CATEGORY_SYSTEM_SERVICES);
         app_indicator_set_status(indicator_, APP_INDICATOR_STATUS_ACTIVE);
         app_indicator_set_menu(indicator_, GTK_MENU(menu_));
-        app_indicator_set_title(indicator_, "Network Watch");
-        app_indicator_set_label(indicator_, "Starting...", "");
+        app_indicator_set_title(indicator_, localized_app_name(language).c_str());
+        app_indicator_set_label(indicator_, language == AppLanguage::SimplifiedChinese ? "启动中..." : "Starting...", "");
     }
 
     void create_menu() {
+        const auto language = current_language();
         menu_ = gtk_menu_new();
 
-        GtkWidget* title_item = gtk_menu_item_new_with_label("Network Watch");
+        GtkWidget* title_item = gtk_menu_item_new_with_label(localized_app_name(language).c_str());
         gtk_widget_set_sensitive(title_item, FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), title_item);
 
         GtkWidget* separator_top = gtk_separator_menu_item_new();
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), separator_top);
 
-        summary_menu_item_ = gtk_menu_item_new_with_label("Down -- | Up --");
+        summary_menu_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "下载 -- | 上传 --" : "Down -- | Up --");
         gtk_widget_set_sensitive(summary_menu_item_, FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), summary_menu_item_);
 
-        cpu_menu_item_ = gtk_menu_item_new_with_label("CPU -- | Memory --");
+        cpu_menu_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "CPU -- | 内存 --" : "CPU -- | Memory --");
         gtk_widget_set_sensitive(cpu_menu_item_, FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), cpu_menu_item_);
 
-        network_menu_item_ = gtk_menu_item_new_with_label("Network --");
+        network_menu_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "网络 --" : "Network --");
         gtk_widget_set_sensitive(network_menu_item_, FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), network_menu_item_);
 
         GtkWidget* separator_mid = gtk_separator_menu_item_new();
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), separator_mid);
 
-        notification_status_item_ = gtk_menu_item_new_with_label("Desktop notifications are active.");
+        notification_status_item_ = gtk_menu_item_new_with_label(notification_status_text(settings_snapshot(), language).c_str());
         gtk_widget_set_sensitive(notification_status_item_, FALSE);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), notification_status_item_);
 
-        open_item_ = gtk_menu_item_new_with_label("Open Monitor");
+        open_item_ = gtk_menu_item_new_with_label(language == AppLanguage::SimplifiedChinese ? "打开监控" : "Open Monitor");
         g_signal_connect(open_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_open_monitor), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), open_item_);
 
-        settings_item_ = gtk_menu_item_new_with_label("Open Settings");
+        settings_item_ = gtk_menu_item_new_with_label(language == AppLanguage::SimplifiedChinese ? "打开设置" : "Open Settings");
         g_signal_connect(settings_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_open_settings), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), settings_item_);
 
-        notifications_item_ = gtk_check_menu_item_new_with_label("Enable Notifications");
+        notifications_item_ = gtk_check_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "启用通知" : "Enable Notifications");
         g_signal_connect(notifications_item_, "toggled", G_CALLBACK(&LinuxTrayAdapter::on_toggle_notifications), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), notifications_item_);
 
-        snooze_30m_item_ = gtk_menu_item_new_with_label("Mute Notifications for 30m");
+        snooze_30m_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "通知静音 30 分钟" : "Mute Notifications for 30m");
         g_signal_connect(snooze_30m_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_snooze_30m), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), snooze_30m_item_);
 
-        snooze_2h_item_ = gtk_menu_item_new_with_label("Mute Notifications for 2h");
+        snooze_2h_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "通知静音 2 小时" : "Mute Notifications for 2h");
         g_signal_connect(snooze_2h_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_snooze_2h), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), snooze_2h_item_);
 
-        resume_notifications_item_ = gtk_menu_item_new_with_label("Resume Notifications");
+        resume_notifications_item_ = gtk_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "恢复通知" : "Resume Notifications");
         g_signal_connect(resume_notifications_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_resume_notifications), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), resume_notifications_item_);
 
-        autostart_item_ = gtk_check_menu_item_new_with_label("Launch at Login");
+        autostart_item_ = gtk_check_menu_item_new_with_label(
+            language == AppLanguage::SimplifiedChinese ? "登录时启动" : "Launch at Login");
         g_signal_connect(autostart_item_, "toggled", G_CALLBACK(&LinuxTrayAdapter::on_toggle_autostart), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), autostart_item_);
 
         GtkWidget* separator_bottom = gtk_separator_menu_item_new();
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), separator_bottom);
 
-        quit_item_ = gtk_menu_item_new_with_label("Quit");
+        quit_item_ = gtk_menu_item_new_with_label(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit");
         g_signal_connect(quit_item_, "activate", G_CALLBACK(&LinuxTrayAdapter::on_quit), this);
         gtk_menu_shell_append(GTK_MENU_SHELL(menu_), quit_item_);
 
@@ -690,8 +711,9 @@ private:
     }
 
     void create_window() {
+        const auto language = current_language();
         window_ = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-        gtk_window_set_title(GTK_WINDOW(window_), "Network Watch");
+        gtk_window_set_title(GTK_WINDOW(window_), localized_app_name(language).c_str());
         gtk_window_set_default_size(GTK_WINDOW(window_), 980, 720);
         g_signal_connect(window_, "delete-event", G_CALLBACK(&LinuxTrayAdapter::on_delete_event), this);
 
@@ -699,11 +721,11 @@ private:
         gtk_container_set_border_width(GTK_CONTAINER(outer_box), 16);
         gtk_container_add(GTK_CONTAINER(window_), outer_box);
 
-        summary_label_ = gtk_label_new("Waiting for first metrics sample...");
+        summary_label_ = gtk_label_new(text_waiting_for_metrics().c_str());
         gtk_widget_set_halign(summary_label_, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(outer_box), summary_label_, FALSE, FALSE, 0);
 
-        updated_at_label_ = gtk_label_new("Last updated: --");
+        updated_at_label_ = gtk_label_new((text_last_updated_prefix() + "--").c_str());
         gtk_widget_set_halign(updated_at_label_, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(outer_box), updated_at_label_, FALSE, FALSE, 0);
 
@@ -712,11 +734,13 @@ private:
         gtk_grid_set_column_spacing(GTK_GRID(metrics_grid), 10);
         gtk_box_pack_start(GTK_BOX(outer_box), metrics_grid, FALSE, FALSE, 0);
 
-        GtkWidget* cpu_frame = create_metric_card("CPU Usage", &cpu_value_label_);
-        GtkWidget* memory_frame = create_metric_card("Memory Usage", &memory_value_label_);
-        GtkWidget* download_frame = create_metric_card("Download", &download_value_label_);
-        GtkWidget* upload_frame = create_metric_card("Upload", &upload_value_label_);
-        GtkWidget* network_frame = create_metric_card("Network", &network_value_label_);
+        GtkWidget* cpu_frame = create_metric_card(
+            (language == AppLanguage::SimplifiedChinese ? "CPU 使用率" : "CPU Usage"), &cpu_value_label_);
+        GtkWidget* memory_frame = create_metric_card(
+            (language == AppLanguage::SimplifiedChinese ? "内存使用率" : "Memory Usage"), &memory_value_label_);
+        GtkWidget* download_frame = create_metric_card(localized_metric_label(AlertMetric::DownloadRate, language).c_str(), &download_value_label_);
+        GtkWidget* upload_frame = create_metric_card(localized_metric_label(AlertMetric::UploadRate, language).c_str(), &upload_value_label_);
+        GtkWidget* network_frame = create_metric_card(localized_metric_label(AlertMetric::NetworkDisconnected, language).c_str(), &network_value_label_);
 
         gtk_grid_attach(GTK_GRID(metrics_grid), cpu_frame, 0, 0, 1, 1);
         gtk_grid_attach(GTK_GRID(metrics_grid), memory_frame, 1, 0, 1, 1);
@@ -733,35 +757,36 @@ private:
         memory_chart_ = gtk_drawing_area_new();
         network_chart_ = gtk_drawing_area_new();
 
-        create_chart_area(cpu_chart_, "CPU Trend", ChartKind::Cpu, trends_box);
-        create_chart_area(memory_chart_, "Memory Trend", ChartKind::Memory, trends_box);
-        create_chart_area(network_chart_, "Network Throughput", ChartKind::Network, trends_box);
-        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), trends_box, gtk_label_new("Trends"));
+        create_chart_area(cpu_chart_, language == AppLanguage::SimplifiedChinese ? "CPU 趋势" : "CPU Trend", ChartKind::Cpu, trends_box);
+        create_chart_area(memory_chart_, language == AppLanguage::SimplifiedChinese ? "内存趋势" : "Memory Trend", ChartKind::Memory, trends_box);
+        create_chart_area(network_chart_, language == AppLanguage::SimplifiedChinese ? "网络吞吐" : "Network Throughput", ChartKind::Network, trends_box);
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), trends_box, gtk_label_new(language == AppLanguage::SimplifiedChinese ? "趋势" : "Trends"));
 
         GtkWidget* interfaces_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         interface_store_ = gtk_list_store_new(5, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
         GtkWidget* interface_tree = gtk_tree_view_new_with_model(GTK_TREE_MODEL(interface_store_));
-        append_text_column(interface_tree, "Interface", 0);
-        append_text_column(interface_tree, "Status", 1);
-        append_text_column(interface_tree, "Address", 2);
-        append_text_column(interface_tree, "Download", 3);
-        append_text_column(interface_tree, "Upload", 4);
+        append_text_column(interface_tree, language == AppLanguage::SimplifiedChinese ? "接口" : "Interface", 0);
+        append_text_column(interface_tree, language == AppLanguage::SimplifiedChinese ? "状态" : "Status", 1);
+        append_text_column(interface_tree, language == AppLanguage::SimplifiedChinese ? "地址" : "Address", 2);
+        append_text_column(interface_tree, localized_metric_label(AlertMetric::DownloadRate, language).c_str(), 3);
+        append_text_column(interface_tree, localized_metric_label(AlertMetric::UploadRate, language).c_str(), 4);
 
         GtkWidget* interface_scroll = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_widget_set_vexpand(interface_scroll, TRUE);
         gtk_container_add(GTK_CONTAINER(interface_scroll), interface_tree);
         gtk_box_pack_start(GTK_BOX(interfaces_box), interface_scroll, TRUE, TRUE, 0);
-        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), interfaces_box, gtk_label_new("Interfaces"));
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), interfaces_box, gtk_label_new(language == AppLanguage::SimplifiedChinese ? "接口" : "Interfaces"));
 
         GtkWidget* alerts_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
         GtkWidget* alerts_action_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         gtk_box_pack_start(GTK_BOX(alerts_box), alerts_action_box, FALSE, FALSE, 0);
 
-        clear_alerts_button_ = gtk_button_new_with_label("Clear Alert History");
+        clear_alerts_button_ = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "清空告警历史" : "Clear Alert History");
         g_signal_connect(clear_alerts_button_, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_clear_alerts), this);
         gtk_box_pack_start(GTK_BOX(alerts_action_box), clear_alerts_button_, FALSE, FALSE, 0);
 
-        alerts_hint_label_ = gtk_label_new("Recent alert and recovery events are shown here.");
+        alerts_hint_label_ = gtk_label_new(
+            language == AppLanguage::SimplifiedChinese ? "最近的告警与恢复事件会显示在这里。" : "Recent alert and recovery events are shown here.");
         gtk_widget_set_halign(alerts_hint_label_, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(alerts_action_box), alerts_hint_label_, FALSE, FALSE, 0);
 
@@ -774,57 +799,67 @@ private:
         gtk_widget_set_vexpand(alert_scroll, TRUE);
         gtk_container_add(GTK_CONTAINER(alert_scroll), alert_text);
         gtk_box_pack_start(GTK_BOX(alerts_box), alert_scroll, TRUE, TRUE, 0);
-        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), alerts_box, gtk_label_new("Alerts"));
+        gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), alerts_box, gtk_label_new(language == AppLanguage::SimplifiedChinese ? "告警" : "Alerts"));
 
         create_settings_page();
 
         GtkWidget* footer_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         gtk_box_pack_end(GTK_BOX(outer_box), footer_box, FALSE, FALSE, 0);
 
-        GtkWidget* hide_button = gtk_button_new_with_label("Hide");
+        GtkWidget* hide_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "隐藏" : "Hide");
         g_signal_connect_swapped(hide_button, "clicked", G_CALLBACK(gtk_widget_hide), window_);
         gtk_box_pack_end(GTK_BOX(footer_box), hide_button, FALSE, FALSE, 0);
 
-        GtkWidget* quit_button = gtk_button_new_with_label("Quit");
+        GtkWidget* quit_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit");
         g_signal_connect(quit_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_quit), this);
         gtk_box_pack_end(GTK_BOX(footer_box), quit_button, FALSE, FALSE, 0);
     }
 
     void create_settings_page() {
+        const auto language = current_language();
         GtkWidget* settings_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
         gtk_container_set_border_width(GTK_CONTAINER(settings_box), 8);
 
-        GtkWidget* general_frame = gtk_frame_new("General");
+        GtkWidget* general_frame = gtk_frame_new(language == AppLanguage::SimplifiedChinese ? "常规" : "General");
         GtkWidget* general_grid = gtk_grid_new();
         gtk_grid_set_row_spacing(GTK_GRID(general_grid), 8);
         gtk_grid_set_column_spacing(GTK_GRID(general_grid), 12);
         gtk_container_set_border_width(GTK_CONTAINER(general_grid), 10);
         gtk_container_add(GTK_CONTAINER(general_frame), general_grid);
 
-        GtkWidget* sample_label = gtk_label_new("Sampling interval (ms)");
+        GtkWidget* sample_label = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "采样间隔（毫秒）" : "Sampling interval (ms)");
         gtk_widget_set_halign(sample_label, GTK_ALIGN_START);
         gtk_grid_attach(GTK_GRID(general_grid), sample_label, 0, 0, 1, 1);
         sample_interval_spin_ = gtk_spin_button_new_with_range(250.0, 10000.0, 250.0);
         gtk_grid_attach(GTK_GRID(general_grid), sample_interval_spin_, 1, 0, 1, 1);
 
-        GtkWidget* tray_label = gtk_label_new("Tray refresh interval (ms)");
+        GtkWidget* tray_label = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "托盘刷新间隔（毫秒）" : "Tray refresh interval (ms)");
         gtk_widget_set_halign(tray_label, GTK_ALIGN_START);
         gtk_grid_attach(GTK_GRID(general_grid), tray_label, 0, 1, 1, 1);
         tray_refresh_spin_ = gtk_spin_button_new_with_range(250.0, 10000.0, 250.0);
         gtk_grid_attach(GTK_GRID(general_grid), tray_refresh_spin_, 1, 1, 1, 1);
 
-        settings_notifications_check_ = gtk_check_button_new_with_label("Enable notifications");
-        gtk_grid_attach(GTK_GRID(general_grid), settings_notifications_check_, 0, 2, 2, 1);
+        GtkWidget* language_label = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "界面语言" : "Interface language");
+        gtk_widget_set_halign(language_label, GTK_ALIGN_START);
+        gtk_grid_attach(GTK_GRID(general_grid), language_label, 0, 2, 1, 1);
+        language_combo_ = gtk_combo_box_text_new();
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(language_combo_), "auto", localized_language_name(AppLanguage::Auto, language).c_str());
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(language_combo_), "en", localized_language_name(AppLanguage::English, language).c_str());
+        gtk_combo_box_text_append(GTK_COMBO_BOX_TEXT(language_combo_), "zh-CN", localized_language_name(AppLanguage::SimplifiedChinese, language).c_str());
+        gtk_grid_attach(GTK_GRID(general_grid), language_combo_, 1, 2, 1, 1);
 
-        settings_autostart_check_ = gtk_check_button_new_with_label("Launch at login");
-        gtk_grid_attach(GTK_GRID(general_grid), settings_autostart_check_, 0, 3, 2, 1);
+        settings_notifications_check_ = gtk_check_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "启用通知" : "Enable notifications");
+        gtk_grid_attach(GTK_GRID(general_grid), settings_notifications_check_, 0, 3, 2, 1);
 
-        quiet_hours_check_ = gtk_check_button_new_with_label("Enable quiet hours");
-        gtk_grid_attach(GTK_GRID(general_grid), quiet_hours_check_, 0, 4, 2, 1);
+        settings_autostart_check_ = gtk_check_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "登录时启动" : "Launch at login");
+        gtk_grid_attach(GTK_GRID(general_grid), settings_autostart_check_, 0, 4, 2, 1);
 
-        GtkWidget* quiet_start_label = gtk_label_new("Quiet hours start");
+        quiet_hours_check_ = gtk_check_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "启用免打扰时段" : "Enable quiet hours");
+        gtk_grid_attach(GTK_GRID(general_grid), quiet_hours_check_, 0, 5, 2, 1);
+
+        GtkWidget* quiet_start_label = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "免打扰开始时间" : "Quiet hours start");
         gtk_widget_set_halign(quiet_start_label, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(general_grid), quiet_start_label, 0, 5, 1, 1);
+        gtk_grid_attach(GTK_GRID(general_grid), quiet_start_label, 0, 6, 1, 1);
 
         GtkWidget* quiet_start_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         quiet_hours_start_hour_spin_ = gtk_spin_button_new_with_range(0.0, 23.0, 1.0);
@@ -832,11 +867,11 @@ private:
         gtk_box_pack_start(GTK_BOX(quiet_start_box), quiet_hours_start_hour_spin_, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(quiet_start_box), gtk_label_new(":"), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(quiet_start_box), quiet_hours_start_minute_spin_, FALSE, FALSE, 0);
-        gtk_grid_attach(GTK_GRID(general_grid), quiet_start_box, 1, 5, 1, 1);
+        gtk_grid_attach(GTK_GRID(general_grid), quiet_start_box, 1, 6, 1, 1);
 
-        GtkWidget* quiet_end_label = gtk_label_new("Quiet hours end");
+        GtkWidget* quiet_end_label = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "免打扰结束时间" : "Quiet hours end");
         gtk_widget_set_halign(quiet_end_label, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(general_grid), quiet_end_label, 0, 6, 1, 1);
+        gtk_grid_attach(GTK_GRID(general_grid), quiet_end_label, 0, 7, 1, 1);
 
         GtkWidget* quiet_end_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
         quiet_hours_end_hour_spin_ = gtk_spin_button_new_with_range(0.0, 23.0, 1.0);
@@ -844,15 +879,15 @@ private:
         gtk_box_pack_start(GTK_BOX(quiet_end_box), quiet_hours_end_hour_spin_, FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(quiet_end_box), gtk_label_new(":"), FALSE, FALSE, 0);
         gtk_box_pack_start(GTK_BOX(quiet_end_box), quiet_hours_end_minute_spin_, FALSE, FALSE, 0);
-        gtk_grid_attach(GTK_GRID(general_grid), quiet_end_box, 1, 6, 1, 1);
+        gtk_grid_attach(GTK_GRID(general_grid), quiet_end_box, 1, 7, 1, 1);
 
-        notification_runtime_label_ = gtk_label_new("Desktop notifications are active.");
+        notification_runtime_label_ = gtk_label_new(notification_status_text(settings_snapshot(), language).c_str());
         gtk_widget_set_halign(notification_runtime_label_, GTK_ALIGN_START);
-        gtk_grid_attach(GTK_GRID(general_grid), notification_runtime_label_, 0, 7, 2, 1);
+        gtk_grid_attach(GTK_GRID(general_grid), notification_runtime_label_, 0, 8, 2, 1);
 
         gtk_box_pack_start(GTK_BOX(settings_box), general_frame, FALSE, FALSE, 0);
 
-        GtkWidget* rules_frame = gtk_frame_new("Alert Rules");
+        GtkWidget* rules_frame = gtk_frame_new(language == AppLanguage::SimplifiedChinese ? "告警规则" : "Alert Rules");
         GtkWidget* rules_scroll = gtk_scrolled_window_new(nullptr, nullptr);
         gtk_widget_set_vexpand(rules_scroll, TRUE);
         gtk_container_add(GTK_CONTAINER(rules_frame), rules_scroll);
@@ -863,7 +898,15 @@ private:
         gtk_container_set_border_width(GTK_CONTAINER(rules_grid), 10);
         gtk_container_add(GTK_CONTAINER(rules_scroll), rules_grid);
 
-        const char* headers[] = {"Rule", "Enabled", "When", "Threshold", "Sustain(s)", "Cooldown(s)", "Notify", "Reset"};
+        const char* headers[] = {
+            language == AppLanguage::SimplifiedChinese ? "规则" : "Rule",
+            language == AppLanguage::SimplifiedChinese ? "启用" : "Enabled",
+            language == AppLanguage::SimplifiedChinese ? "条件" : "When",
+            language == AppLanguage::SimplifiedChinese ? "阈值" : "Threshold",
+            language == AppLanguage::SimplifiedChinese ? "持续(秒)" : "Sustain(s)",
+            language == AppLanguage::SimplifiedChinese ? "冷却(秒)" : "Cooldown(s)",
+            language == AppLanguage::SimplifiedChinese ? "通知" : "Notify",
+            language == AppLanguage::SimplifiedChinese ? "重置" : "Reset"};
         for (int column = 0; column < 8; ++column) {
             GtkWidget* label = gtk_label_new(headers[column]);
             gtk_widget_set_halign(label, GTK_ALIGN_START);
@@ -897,7 +940,7 @@ private:
                 threshold_step(rule.metric));
             gtk_spin_button_set_digits(GTK_SPIN_BUTTON(widgets.threshold), threshold_digits(rule.metric));
             gtk_box_pack_start(GTK_BOX(threshold_box), widgets.threshold, FALSE, FALSE, 0);
-            GtkWidget* unit = gtk_label_new(threshold_unit_label(rule.metric));
+            GtkWidget* unit = gtk_label_new(threshold_unit_label(rule.metric, language).c_str());
             gtk_box_pack_start(GTK_BOX(threshold_box), unit, FALSE, FALSE, 0);
             gtk_grid_attach(GTK_GRID(rules_grid), threshold_box, 3, row, 1, 1);
 
@@ -907,18 +950,20 @@ private:
             widgets.cooldown = gtk_spin_button_new_with_range(1.0, 7200.0, 1.0);
             gtk_grid_attach(GTK_GRID(rules_grid), widgets.cooldown, 5, row, 1, 1);
 
-            widgets.notify_button = gtk_button_new_with_label(rule_notification_status_text(rule).c_str());
+            widgets.notify_button = gtk_button_new_with_label(rule_notification_status_text(rule, language).c_str());
             g_object_set_data(G_OBJECT(widgets.notify_button), "rule-index", GINT_TO_POINTER(static_cast<int>(index)));
             g_signal_connect(widgets.notify_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_toggle_rule_notification_snooze), this);
             gtk_grid_attach(GTK_GRID(rules_grid), widgets.notify_button, 6, row, 1, 1);
 
-            widgets.reset_button = gtk_button_new_with_label("Reset");
+            widgets.reset_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "重置" : "Reset");
             g_object_set_data(G_OBJECT(widgets.reset_button), "rule-index", GINT_TO_POINTER(static_cast<int>(index)));
             g_signal_connect(widgets.reset_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_reset_rule), this);
             gtk_grid_attach(GTK_GRID(rules_grid), widgets.reset_button, 7, row, 1, 1);
 
             if (rule.metric == AlertMetric::NetworkDisconnected) {
-                gtk_widget_set_tooltip_text(widgets.threshold, "Network disconnection uses a fixed connectivity threshold.");
+                gtk_widget_set_tooltip_text(
+                    widgets.threshold,
+                    language == AppLanguage::SimplifiedChinese ? "网络断连使用固定连通性阈值。" : "Network disconnection uses a fixed connectivity threshold.");
             }
 
             g_signal_connect(widgets.enabled, "toggled", G_CALLBACK(&LinuxTrayAdapter::on_settings_widget_changed), this);
@@ -929,6 +974,7 @@ private:
             rule_editors_.push_back(widgets);
         }
 
+        g_signal_connect(language_combo_, "changed", G_CALLBACK(&LinuxTrayAdapter::on_settings_widget_changed), this);
         g_signal_connect(sample_interval_spin_, "value-changed", G_CALLBACK(&LinuxTrayAdapter::on_settings_widget_changed), this);
         g_signal_connect(tray_refresh_spin_, "value-changed", G_CALLBACK(&LinuxTrayAdapter::on_settings_widget_changed), this);
         g_signal_connect(settings_notifications_check_, "toggled", G_CALLBACK(&LinuxTrayAdapter::on_settings_widget_changed), this);
@@ -944,28 +990,28 @@ private:
         GtkWidget* action_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
         gtk_box_pack_start(GTK_BOX(settings_box), action_box, FALSE, FALSE, 0);
 
-        GtkWidget* apply_button = gtk_button_new_with_label("Apply");
+        GtkWidget* apply_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "应用" : "Apply");
         g_signal_connect(apply_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_apply_settings), this);
         apply_settings_button_ = apply_button;
         gtk_box_pack_start(GTK_BOX(action_box), apply_button, FALSE, FALSE, 0);
 
-        GtkWidget* reload_button = gtk_button_new_with_label("Reload Saved");
+        GtkWidget* reload_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "重新载入已保存" : "Reload Saved");
         g_signal_connect(reload_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_reload_saved), this);
         gtk_box_pack_start(GTK_BOX(action_box), reload_button, FALSE, FALSE, 0);
 
-        GtkWidget* defaults_button = gtk_button_new_with_label("Load Defaults");
+        GtkWidget* defaults_button = gtk_button_new_with_label(language == AppLanguage::SimplifiedChinese ? "加载默认值" : "Load Defaults");
         g_signal_connect(defaults_button, "clicked", G_CALLBACK(&LinuxTrayAdapter::on_load_defaults), this);
         gtk_box_pack_start(GTK_BOX(action_box), defaults_button, FALSE, FALSE, 0);
 
-        settings_status_label_ = gtk_label_new("Settings are loaded from the current configuration.");
+        settings_status_label_ = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "已从当前配置加载设置。" : "Settings are loaded from the current configuration.");
         gtk_widget_set_halign(settings_status_label_, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(settings_box), settings_status_label_, FALSE, FALSE, 0);
 
-        settings_dirty_label_ = gtk_label_new("All settings changes are saved.");
+        settings_dirty_label_ = gtk_label_new(language == AppLanguage::SimplifiedChinese ? "所有设置更改都已保存。" : "All settings changes are saved.");
         gtk_widget_set_halign(settings_dirty_label_, GTK_ALIGN_START);
         gtk_box_pack_start(GTK_BOX(settings_box), settings_dirty_label_, FALSE, FALSE, 0);
 
-        settings_page_index_ = gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), settings_box, gtk_label_new("Settings"));
+        settings_page_index_ = gtk_notebook_append_page(GTK_NOTEBOOK(notebook_), settings_box, gtk_label_new(language == AppLanguage::SimplifiedChinese ? "设置" : "Settings"));
     }
 
     void create_chart_area(GtkWidget* area, const char* title, ChartKind kind, GtkWidget* parent_box) {
@@ -995,6 +1041,7 @@ private:
 
     void populate_settings_form(const Settings& settings) {
         suppress_signal_updates_ = true;
+        gtk_combo_box_set_active_id(GTK_COMBO_BOX(language_combo_), to_string(settings.language).c_str());
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(sample_interval_spin_), static_cast<double>(settings.sample_interval.count()));
         gtk_spin_button_set_value(GTK_SPIN_BUTTON(tray_refresh_spin_), static_cast<double>(settings.tray_refresh_interval.count()));
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(settings_notifications_check_), settings.notifications_enabled);
@@ -1028,6 +1075,9 @@ private:
     Settings collect_settings_from_widgets() const {
         auto settings = settings_snapshot();
 
+        if (const char* language_id = gtk_combo_box_get_active_id(GTK_COMBO_BOX(language_combo_)); language_id != nullptr) {
+            settings.language = app_language_from_string(language_id);
+        }
         settings.sample_interval = std::chrono::milliseconds(
             gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(sample_interval_spin_)));
         settings.tray_refresh_interval = std::chrono::milliseconds(
@@ -1065,6 +1115,7 @@ private:
 
     void apply_settings(Settings new_settings, bool notify_runtime, const std::string& status_message) {
         const auto previous = settings_snapshot();
+        const bool language_changed = previous.language != new_settings.language;
 
         if (autostart_adapter_ != nullptr && previous.autostart_enabled != new_settings.autostart_enabled) {
             const bool success = new_settings.autostart_enabled
@@ -1086,6 +1137,12 @@ private:
         sync_settings_widgets_from_model();
         set_status_message(status_message);
         update_settings_dirty_state();
+        if (language_changed) {
+            set_status_message(
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "语言设置已保存。动态内容已切换，部分静态界面文本将在下次启动时完全更新。"
+                    : "Language setting saved. Dynamic content has switched; some static UI text will fully update on next launch.");
+        }
 
         if (notify_runtime && runtime_settings_changed(previous, new_settings)) {
             SettingsListener listener;
@@ -1142,22 +1199,27 @@ private:
 
         gtk_label_set_text(GTK_LABEL(download_value_label_), format_rate(latest->download_bytes_per_second).c_str());
         gtk_label_set_text(GTK_LABEL(upload_value_label_), format_rate(latest->upload_bytes_per_second).c_str());
-        gtk_label_set_text(GTK_LABEL(network_value_label_), latest->network_connected ? "Connected" : "Offline");
+        gtk_label_set_text(
+            GTK_LABEL(network_value_label_),
+            current_language() == AppLanguage::SimplifiedChinese
+                ? (latest->network_connected ? "已连接" : "离线")
+                : (latest->network_connected ? "Connected" : "Offline"));
 
-        const auto updated_text = "Last updated: " + format_timestamp(latest->timestamp);
+        const auto updated_text = text_last_updated_prefix() + format_timestamp(latest->timestamp);
         gtk_label_set_text(GTK_LABEL(updated_at_label_), updated_text.c_str());
 
         if (cpu_menu_item_ != nullptr) {
             const auto cpu_line =
-                "CPU " + format_percent(latest->cpu_usage_percent) +
-                " | Memory " + format_percent(latest->memory_usage_percent);
+                std::string("CPU ") + format_percent(latest->cpu_usage_percent) +
+                " | " + localized_metric_label(AlertMetric::MemoryUsage, current_language()) + " " + format_percent(latest->memory_usage_percent);
             gtk_menu_item_set_label(GTK_MENU_ITEM(cpu_menu_item_), cpu_line.c_str());
         }
         if (network_menu_item_ != nullptr) {
             const auto network_line =
-                std::string(latest->network_connected ? "Network online | " : "Network offline | ") +
-                "Down " + format_rate(latest->download_bytes_per_second) +
-                " | Up " + format_rate(latest->upload_bytes_per_second);
+                localized_metric_label(AlertMetric::NetworkDisconnected, current_language()) + " " +
+                localized_network_state(latest->network_connected, current_language()) + " | " +
+                localized_metric_short_label(AlertMetric::DownloadRate, current_language()) + " " + format_rate(latest->download_bytes_per_second) +
+                " | " + localized_metric_short_label(AlertMetric::UploadRate, current_language()) + " " + format_rate(latest->upload_bytes_per_second);
             gtk_menu_item_set_label(GTK_MENU_ITEM(network_menu_item_), network_line.c_str());
         }
 
@@ -1171,7 +1233,8 @@ private:
                 0,
                 item.name.c_str(),
                 1,
-                item.is_up ? "Up" : "Down",
+                item.is_up ? (current_language() == AppLanguage::SimplifiedChinese ? "启用" : "Up")
+                           : (current_language() == AppLanguage::SimplifiedChinese ? "停用" : "Down"),
                 2,
                 item.address.c_str(),
                 3,
@@ -1199,7 +1262,7 @@ private:
 
         std::ostringstream output;
         if (lines.empty()) {
-            output << "No alerts yet.";
+            output << (current_language() == AppLanguage::SimplifiedChinese ? "暂无告警。" : "No alerts yet.");
         } else {
             for (const auto& line : lines) {
                 output << line << '\n';
@@ -1208,8 +1271,12 @@ private:
         gtk_text_buffer_set_text(alerts_buffer_, output.str().c_str(), -1);
         if (alerts_hint_label_ != nullptr) {
             const auto hint = lines.empty()
-                ? std::string("Recent alert and recovery events will appear here.")
-                : std::to_string(lines.size()) + " recent alert events in memory.";
+                ? std::string(current_language() == AppLanguage::SimplifiedChinese
+                      ? "最近的告警与恢复事件会显示在这里。"
+                      : "Recent alert and recovery events will appear here.")
+                : (current_language() == AppLanguage::SimplifiedChinese
+                      ? "当前内存中有 " + std::to_string(lines.size()) + " 条最近告警事件。"
+                      : std::to_string(lines.size()) + " recent alert events in memory.");
             gtk_label_set_text(GTK_LABEL(alerts_hint_label_), hint.c_str());
         }
     }
@@ -1240,7 +1307,7 @@ private:
         if (samples.empty()) {
             cairo_set_source_rgb(cr, 0.85, 0.85, 0.85);
             cairo_move_to(cr, 16.0, height / 2.0);
-            cairo_show_text(cr, "Waiting for enough samples...");
+            cairo_show_text(cr, current_language() == AppLanguage::SimplifiedChinese ? "等待足够的采样数据..." : "Waiting for enough samples...");
             return;
         }
 
@@ -1535,6 +1602,7 @@ private:
 
     GtkWidget* sample_interval_spin_ = nullptr;
     GtkWidget* tray_refresh_spin_ = nullptr;
+    GtkWidget* language_combo_ = nullptr;
     GtkWidget* settings_notifications_check_ = nullptr;
     GtkWidget* settings_autostart_check_ = nullptr;
     GtkWidget* quiet_hours_check_ = nullptr;

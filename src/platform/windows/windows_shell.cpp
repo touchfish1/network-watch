@@ -18,6 +18,10 @@ std::unique_ptr<IMetricsProvider> create_windows_metrics_provider();
 
 namespace {
 
+AppLanguage effective_language(const Settings& settings) {
+    return resolve_language(settings);
+}
+
 constexpr UINT kTrayCallbackMessage = WM_APP + 1;
 constexpr UINT kApplySummaryMessage = WM_APP + 2;
 constexpr UINT kShowMonitorMessage = WM_APP + 3;
@@ -64,9 +68,9 @@ std::string format_timestamp(const TimePoint& timestamp) {
     return output.str();
 }
 
-std::string build_interfaces_text(const MetricDelta& latest) {
+std::string build_interfaces_text(const MetricDelta& latest, AppLanguage language) {
     if (latest.interfaces.empty()) {
-        return "No active interfaces detected yet.";
+        return language == AppLanguage::SimplifiedChinese ? "暂未检测到活跃网络接口。" : "No active interfaces detected yet.";
     }
 
     std::ostringstream output;
@@ -77,9 +81,14 @@ std::string build_interfaces_text(const MetricDelta& latest) {
         }
         first = false;
         output << item.name << " | "
-               << (item.is_up ? "up" : "down") << " | "
-               << "Down " << format_rate(item.rx_bytes_per_second) << " | "
-               << "Up " << format_rate(item.tx_bytes_per_second);
+               << (item.is_up
+                       ? (language == AppLanguage::SimplifiedChinese ? "启用" : "up")
+                       : (language == AppLanguage::SimplifiedChinese ? "停用" : "down"))
+               << " | "
+               << localized_metric_short_label(AlertMetric::DownloadRate, language) << ' '
+               << format_rate(item.rx_bytes_per_second) << " | "
+               << localized_metric_short_label(AlertMetric::UploadRate, language) << ' '
+               << format_rate(item.tx_bytes_per_second);
         if (!item.address.empty()) {
             output << " | " << item.address;
         }
@@ -117,7 +126,7 @@ void set_control_text(HWND control, const std::string& text) {
 
 class WindowsTrayAdapter final : public ITrayAdapter {
 public:
-    WindowsTrayAdapter() = default;
+    explicit WindowsTrayAdapter(Settings settings) : settings_(std::move(settings)) {}
 
     ~WindowsTrayAdapter() override {
         shutdown();
@@ -149,13 +158,34 @@ public:
             throw std::runtime_error("Failed to create Windows tray host window");
         }
 
+        const auto language = current_language();
         menu_ = CreatePopupMenu();
-        AppendMenuW(menu_, MF_STRING | MF_GRAYED, kMenuSummaryId, L"Starting...");
-        AppendMenuW(menu_, MF_STRING | MF_GRAYED, kMenuCpuMemoryId, L"CPU -- | Memory --");
-        AppendMenuW(menu_, MF_STRING | MF_GRAYED, kMenuNetworkId, L"Network --");
+        AppendMenuW(
+            menu_,
+            MF_STRING | MF_GRAYED,
+            kMenuSummaryId,
+            utf8_to_wide(language == AppLanguage::SimplifiedChinese ? "启动中..." : "Starting...").c_str());
+        AppendMenuW(
+            menu_,
+            MF_STRING | MF_GRAYED,
+            kMenuCpuMemoryId,
+            utf8_to_wide("CPU -- | " + std::string(language == AppLanguage::SimplifiedChinese ? "内存" : "Memory") + " --").c_str());
+        AppendMenuW(
+            menu_,
+            MF_STRING | MF_GRAYED,
+            kMenuNetworkId,
+            utf8_to_wide(std::string(language == AppLanguage::SimplifiedChinese ? "网络 --" : "Network --")).c_str());
         AppendMenuW(menu_, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu_, MF_STRING, kMenuOpenId, L"Open Monitor");
-        AppendMenuW(menu_, MF_STRING, kMenuQuitId, L"Quit");
+        AppendMenuW(
+            menu_,
+            MF_STRING,
+            kMenuOpenId,
+            utf8_to_wide(language == AppLanguage::SimplifiedChinese ? "打开监控" : "Open Monitor").c_str());
+        AppendMenuW(
+            menu_,
+            MF_STRING,
+            kMenuQuitId,
+            utf8_to_wide(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit").c_str());
 
         tray_icon_.cbSize = sizeof(tray_icon_);
         tray_icon_.hWnd = host_hwnd_;
@@ -163,7 +193,7 @@ public:
         tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
         tray_icon_.uCallbackMessage = kTrayCallbackMessage;
         tray_icon_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
-        lstrcpynW(tray_icon_.szTip, L"Network Watch", ARRAYSIZE(tray_icon_.szTip));
+        lstrcpynW(tray_icon_.szTip, utf8_to_wide(localized_app_name(language)).c_str(), ARRAYSIZE(tray_icon_.szTip));
 
         if (!Shell_NotifyIconW(NIM_ADD, &tray_icon_)) {
             throw std::runtime_error("Failed to create Windows notification area icon");
@@ -194,7 +224,7 @@ public:
             std::scoped_lock lock(mutex_);
             latest_ = latest;
             history_ = history;
-            summary_ = build_tray_summary(latest);
+            summary_ = build_tray_summary(latest, current_language());
         }
         post_host_message(kApplySummaryMessage);
         post_host_message(kRefreshMonitorMessage);
@@ -238,6 +268,10 @@ public:
     }
 
 private:
+    AppLanguage current_language() const {
+        return effective_language(settings_);
+    }
+
     static LRESULT CALLBACK host_window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
         if (message == WM_NCCREATE) {
             const auto* create = reinterpret_cast<CREATESTRUCTW*>(l_param);
@@ -375,7 +409,10 @@ private:
         tray_icon_.uFlags = NIF_TIP | NIF_ICON;
         tray_icon_.hIcon = LoadIcon(nullptr, summary.warning ? IDI_WARNING : IDI_APPLICATION);
         const auto tip = truncate_tip(utf8_to_wide(summary.tooltip.empty() ? summary.title : summary.tooltip));
-        lstrcpynW(tray_icon_.szTip, tip.empty() ? L"Network Watch" : tip.c_str(), ARRAYSIZE(tray_icon_.szTip));
+        lstrcpynW(
+            tray_icon_.szTip,
+            tip.empty() ? utf8_to_wide(localized_app_name(current_language())).c_str() : tip.c_str(),
+            ARRAYSIZE(tray_icon_.szTip));
         Shell_NotifyIconW(NIM_MODIFY, &tray_icon_);
 
         if (menu_ != nullptr) {
@@ -383,10 +420,16 @@ private:
 
             if (latest.has_value()) {
                 const std::string cpu_line =
-                    "CPU " + format_percent(latest->cpu_usage_percent) + " | Memory " + format_percent(latest->memory_usage_percent);
+                    "CPU " + format_percent(latest->cpu_usage_percent) + " | " +
+                    localized_metric_label(AlertMetric::MemoryUsage, current_language()) + ' ' +
+                    format_percent(latest->memory_usage_percent);
                 const std::string network_line =
-                    std::string(latest->network_connected ? "Network online | " : "Network offline | ") +
-                    "Down " + format_rate(latest->download_bytes_per_second) + " | Up " + format_rate(latest->upload_bytes_per_second);
+                    localized_metric_label(AlertMetric::NetworkDisconnected, current_language()) + ' ' +
+                    localized_network_state(latest->network_connected, current_language()) + " | " +
+                    localized_metric_short_label(AlertMetric::DownloadRate, current_language()) + ' ' +
+                    format_rate(latest->download_bytes_per_second) + " | " +
+                    localized_metric_short_label(AlertMetric::UploadRate, current_language()) + ' ' +
+                    format_rate(latest->upload_bytes_per_second);
 
                 ModifyMenuW(menu_, kMenuCpuMemoryId, MF_BYCOMMAND | MF_STRING | MF_GRAYED, kMenuCpuMemoryId, utf8_to_wide(cpu_line).c_str());
                 ModifyMenuW(menu_, kMenuNetworkId, MF_BYCOMMAND | MF_STRING | MF_GRAYED, kMenuNetworkId, utf8_to_wide(network_line).c_str());
@@ -416,7 +459,7 @@ private:
         monitor_hwnd_ = CreateWindowExW(
             WS_EX_APPWINDOW,
             kMonitorWindowClassName,
-            L"Network Watch Monitor",
+            utf8_to_wide(localized_app_name(current_language())).c_str(),
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -434,25 +477,67 @@ private:
         HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
 
         int y = 16;
-        create_label(L"Overview", 16, y, 680, 22, true, font);
+        create_label(utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "概览" : "Overview").c_str(), 16, y, 680, 22, true, font);
         y += 30;
-        summary_label_ = create_label(L"Waiting for the first metrics sample...", 16, y, 700, 22, false, font);
+        summary_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "等待第一批指标采样..." : "Waiting for the first metrics sample...").c_str(),
+            16,
+            y,
+            700,
+            22,
+            false,
+            font);
         y += 28;
-        updated_label_ = create_label(L"Last updated: --", 16, y, 700, 22, false, font);
+        updated_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "最近更新: --" : "Last updated: --").c_str(),
+            16,
+            y,
+            700,
+            22,
+            false,
+            font);
         y += 36;
 
         cpu_label_ = create_label(L"CPU: --", 16, y, 330, 22, false, font);
-        memory_label_ = create_label(L"Memory: --", 380, y, 330, 22, false, font);
+        memory_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "内存: --" : "Memory: --").c_str(),
+            380,
+            y,
+            330,
+            22,
+            false,
+            font);
         y += 30;
 
-        download_label_ = create_label(L"Download: --", 16, y, 330, 22, false, font);
-        upload_label_ = create_label(L"Upload: --", 380, y, 330, 22, false, font);
+        download_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "下载: --" : "Download: --").c_str(),
+            16,
+            y,
+            330,
+            22,
+            false,
+            font);
+        upload_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "上传: --" : "Upload: --").c_str(),
+            380,
+            y,
+            330,
+            22,
+            false,
+            font);
         y += 30;
 
-        network_label_ = create_label(L"Network: --", 16, y, 330, 22, false, font);
+        network_label_ = create_label(
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "网络: --" : "Network: --").c_str(),
+            16,
+            y,
+            330,
+            22,
+            false,
+            font);
         y += 40;
 
-        create_label(L"Interfaces", 16, y, 680, 22, true, font);
+        create_label(utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "接口" : "Interfaces").c_str(), 16, y, 680, 22, true, font);
         y += 28;
 
         interfaces_label_ = CreateWindowExW(
@@ -522,29 +607,36 @@ private:
         }
 
         if (!latest.has_value()) {
-            set_control_text(summary_label_, "Waiting for the first metrics sample...");
-            set_control_text(updated_label_, "Last updated: --");
+            set_control_text(summary_label_, current_language() == AppLanguage::SimplifiedChinese ? "等待第一批指标采样..." : "Waiting for the first metrics sample...");
+            set_control_text(updated_label_, current_language() == AppLanguage::SimplifiedChinese ? "最近更新: --" : "Last updated: --");
             set_control_text(cpu_label_, "CPU: --");
-            set_control_text(memory_label_, "Memory: --");
-            set_control_text(download_label_, "Download: --");
-            set_control_text(upload_label_, "Upload: --");
-            set_control_text(network_label_, "Network: --");
-            set_control_text(interfaces_label_, "No interface data available yet.");
+            set_control_text(memory_label_, current_language() == AppLanguage::SimplifiedChinese ? "内存: --" : "Memory: --");
+            set_control_text(download_label_, current_language() == AppLanguage::SimplifiedChinese ? "下载: --" : "Download: --");
+            set_control_text(upload_label_, current_language() == AppLanguage::SimplifiedChinese ? "上传: --" : "Upload: --");
+            set_control_text(network_label_, current_language() == AppLanguage::SimplifiedChinese ? "网络: --" : "Network: --");
+            set_control_text(interfaces_label_, current_language() == AppLanguage::SimplifiedChinese ? "暂时没有可用的接口数据。" : "No interface data available yet.");
             return;
         }
 
-        set_control_text(summary_label_, build_tray_summary(*latest).tooltip);
-        set_control_text(updated_label_, "Last updated: " + format_timestamp(latest->timestamp));
+        set_control_text(summary_label_, build_tray_summary(*latest, current_language()).tooltip);
+        set_control_text(
+            updated_label_,
+            std::string(current_language() == AppLanguage::SimplifiedChinese ? "最近更新: " : "Last updated: ") +
+                format_timestamp(latest->timestamp));
         set_control_text(cpu_label_, "CPU: " + format_percent(latest->cpu_usage_percent));
         set_control_text(
             memory_label_,
-            "Memory: " + format_percent(latest->memory_usage_percent) + " (" +
+            localized_metric_label(AlertMetric::MemoryUsage, current_language()) + ": " +
+                format_percent(latest->memory_usage_percent) + " (" +
                 format_bytes(static_cast<double>(latest->memory_used_bytes)) + " / " +
                 format_bytes(static_cast<double>(latest->memory_total_bytes)) + ")");
-        set_control_text(download_label_, "Download: " + format_rate(latest->download_bytes_per_second));
-        set_control_text(upload_label_, "Upload: " + format_rate(latest->upload_bytes_per_second));
-        set_control_text(network_label_, std::string("Network: ") + (latest->network_connected ? "online" : "offline"));
-        set_control_text(interfaces_label_, build_interfaces_text(*latest));
+        set_control_text(download_label_, localized_metric_label(AlertMetric::DownloadRate, current_language()) + ": " + format_rate(latest->download_bytes_per_second));
+        set_control_text(upload_label_, localized_metric_label(AlertMetric::UploadRate, current_language()) + ": " + format_rate(latest->upload_bytes_per_second));
+        set_control_text(
+            network_label_,
+            localized_metric_label(AlertMetric::NetworkDisconnected, current_language()) + ": " +
+                localized_network_state(latest->network_connected, current_language()));
+        set_control_text(interfaces_label_, build_interfaces_text(*latest, current_language()));
     }
 
     void destroy_monitor_window() {
@@ -567,6 +659,7 @@ private:
     }
 
     std::mutex mutex_;
+    Settings settings_;
     TraySummary summary_ {};
     std::optional<MetricDelta> latest_ {};
     HistorySnapshot history_ {};
@@ -603,10 +696,10 @@ public:
 
 }  // namespace
 
-PlatformComponents create_platform_components(const Settings&) {
+PlatformComponents create_platform_components(const Settings& settings) {
     PlatformComponents components;
     components.metrics_provider = create_windows_metrics_provider();
-    components.tray_adapter = std::make_unique<WindowsTrayAdapter>();
+    components.tray_adapter = std::make_unique<WindowsTrayAdapter>(settings);
     components.notification_adapter = std::make_unique<WindowsNotificationAdapter>();
     components.autostart_adapter = std::make_unique<WindowsAutostartAdapter>();
     return components;

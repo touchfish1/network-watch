@@ -5,7 +5,9 @@
 namespace network_watch {
 
 MonitorService::MonitorService(std::unique_ptr<IMetricsProvider> provider, Settings settings)
-    : provider_(std::move(provider)), settings_(std::move(settings)), alert_engine_(settings_.alert_rules) {}
+    : provider_(std::move(provider)),
+      settings_(std::move(settings)),
+      alert_engine_(settings_.alert_rules, resolve_language(settings_)) {}
 
 MonitorService::~MonitorService() {
     stop();
@@ -40,7 +42,7 @@ void MonitorService::set_alert_listener(AlertListener listener) {
 void MonitorService::update_settings(const Settings& settings) {
     std::scoped_lock lock(mutex_);
     settings_ = settings;
-    alert_engine_ = AlertEngine(settings_.alert_rules);
+    alert_engine_ = AlertEngine(settings_.alert_rules, resolve_language(settings_));
 }
 
 std::optional<MetricDelta> MonitorService::latest_delta() const {

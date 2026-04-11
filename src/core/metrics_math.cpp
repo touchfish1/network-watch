@@ -50,6 +50,10 @@ std::string format_rate(double bytes) {
     return output.str();
 }
 
+std::string network_text(AppLanguage language) {
+    return language == AppLanguage::SimplifiedChinese ? "网络" : "Network";
+}
+
 }  // namespace
 
 std::optional<MetricDelta> compute_metric_delta(const MetricSample& previous, const MetricSample& current) {
@@ -90,23 +94,31 @@ std::optional<MetricDelta> compute_metric_delta(const MetricSample& previous, co
     return delta;
 }
 
-TraySummary build_tray_summary(const MetricDelta& delta) {
+TraySummary build_tray_summary(const MetricDelta& delta, AppLanguage language) {
     TraySummary summary;
     summary.warning = delta.cpu_usage_percent >= 85.0 || delta.memory_usage_percent >= 90.0 || !delta.network_connected;
 
     std::ostringstream title;
-    title << "CPU " << std::fixed << std::setprecision(0) << delta.cpu_usage_percent << "% | "
-          << "MEM " << delta.memory_usage_percent << "% | "
-          << "Down " << format_rate(delta.download_bytes_per_second) << " | "
-          << "Up " << format_rate(delta.upload_bytes_per_second);
+    title << localized_metric_short_label(AlertMetric::CpuUsage, language) << ' '
+          << std::fixed << std::setprecision(0) << delta.cpu_usage_percent << "% | "
+          << localized_metric_short_label(AlertMetric::MemoryUsage, language) << ' '
+          << delta.memory_usage_percent << "% | "
+          << localized_metric_short_label(AlertMetric::DownloadRate, language) << ' '
+          << format_rate(delta.download_bytes_per_second) << " | "
+          << localized_metric_short_label(AlertMetric::UploadRate, language) << ' '
+          << format_rate(delta.upload_bytes_per_second);
     summary.title = title.str();
 
     std::ostringstream tooltip;
-    tooltip << "CPU " << std::fixed << std::setprecision(1) << delta.cpu_usage_percent << "%, "
-            << "Memory " << delta.memory_usage_percent << "%, "
-            << "Down " << format_rate(delta.download_bytes_per_second) << ", "
-            << "Up " << format_rate(delta.upload_bytes_per_second) << ", "
-            << "Network " << (delta.network_connected ? "online" : "offline");
+    tooltip << localized_metric_label(AlertMetric::CpuUsage, language) << ' '
+            << std::fixed << std::setprecision(1) << delta.cpu_usage_percent << "%, "
+            << localized_metric_label(AlertMetric::MemoryUsage, language) << ' '
+            << delta.memory_usage_percent << "%, "
+            << localized_metric_label(AlertMetric::DownloadRate, language) << ' '
+            << format_rate(delta.download_bytes_per_second) << ", "
+            << localized_metric_label(AlertMetric::UploadRate, language) << ' '
+            << format_rate(delta.upload_bytes_per_second) << ", "
+            << network_text(language) << ' ' << localized_network_state(delta.network_connected, language);
     summary.tooltip = tooltip.str();
 
     return summary;

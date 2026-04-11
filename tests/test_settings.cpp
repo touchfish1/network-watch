@@ -14,6 +14,7 @@ void test_default_settings_have_rules() {
 void test_save_and_load_round_trip() {
     auto settings = network_watch::default_settings();
     settings.sample_interval = std::chrono::milliseconds(1500);
+    settings.language = network_watch::AppLanguage::SimplifiedChinese;
     settings.notifications_enabled = false;
     settings.notification_snooze_until_epoch_seconds = 123456789;
     settings.quiet_hours_enabled = true;
@@ -27,6 +28,7 @@ void test_save_and_load_round_trip() {
     const auto loaded = network_watch::load_settings(path);
 
     network_watch::test::expect(loaded.sample_interval == settings.sample_interval, "sample interval should round-trip");
+    network_watch::test::expect(loaded.language == settings.language, "language should round-trip");
     network_watch::test::expect(loaded.notifications_enabled == settings.notifications_enabled, "notification flag should round-trip");
     network_watch::test::expect(
         loaded.notification_snooze_until_epoch_seconds == settings.notification_snooze_until_epoch_seconds,
@@ -54,6 +56,17 @@ void test_default_alert_rule_lookup() {
 
     const auto missing = network_watch::default_alert_rule("missing_rule");
     network_watch::test::expect(!missing.has_value(), "lookup should return empty for unknown rule");
+}
+
+void test_language_helpers() {
+    auto settings = network_watch::default_settings();
+    settings.language = network_watch::AppLanguage::English;
+    network_watch::test::expect(
+        network_watch::resolve_language(settings) == network_watch::AppLanguage::English,
+        "explicit language should bypass auto detection");
+    network_watch::test::expect(
+        network_watch::app_language_from_string("zh-CN") == network_watch::AppLanguage::SimplifiedChinese,
+        "language parser should recognize zh-CN");
 }
 
 void test_notifications_allowed_respects_snooze() {
@@ -115,6 +128,7 @@ void run_settings_tests() {
     test_default_settings_have_rules();
     test_save_and_load_round_trip();
     test_default_alert_rule_lookup();
+    test_language_helpers();
     test_notifications_allowed_respects_snooze();
     test_quiet_hours_active_across_midnight();
     test_alert_rule_notifications_allowed_respects_rule_snooze();

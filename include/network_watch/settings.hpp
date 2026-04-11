@@ -9,6 +9,12 @@
 
 namespace network_watch {
 
+enum class AppLanguage {
+    Auto,
+    English,
+    SimplifiedChinese,
+};
+
 enum class AlertMetric {
     CpuUsage,
     MemoryUsage,
@@ -31,6 +37,7 @@ struct AlertRule {
 struct Settings {
     std::chrono::milliseconds sample_interval {1000};
     std::chrono::milliseconds tray_refresh_interval {2000};
+    AppLanguage language = AppLanguage::Auto;
     bool notifications_enabled = true;
     std::optional<std::int64_t> notification_snooze_until_epoch_seconds;
     bool quiet_hours_enabled = false;
@@ -46,6 +53,15 @@ Settings default_settings();
 std::optional<AlertRule> default_alert_rule(const std::string& rule_id);
 Settings load_settings(const std::filesystem::path& path);
 void save_settings(const std::filesystem::path& path, const Settings& settings);
+std::string to_string(AppLanguage language);
+AppLanguage app_language_from_string(const std::string& value);
+AppLanguage detect_system_language();
+AppLanguage resolve_language(const Settings& settings);
+std::string localized_language_name(AppLanguage option, AppLanguage display_language);
+std::string localized_app_name(AppLanguage language);
+std::string localized_metric_label(AlertMetric metric, AppLanguage language);
+std::string localized_metric_short_label(AlertMetric metric, AppLanguage language);
+std::string localized_network_state(bool connected, AppLanguage language);
 bool quiet_hours_active(
     const Settings& settings,
     std::chrono::system_clock::time_point now = std::chrono::system_clock::now());

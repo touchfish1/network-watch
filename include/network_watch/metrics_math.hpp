@@ -5,11 +5,12 @@
 #include <string>
 
 #include "network_watch/models.hpp"
+#include "network_watch/settings.hpp"
 
 namespace network_watch {
 
 std::optional<MetricDelta> compute_metric_delta(const MetricSample& previous, const MetricSample& current);
-TraySummary build_tray_summary(const MetricDelta& delta);
+TraySummary build_tray_summary(const MetricDelta& delta, AppLanguage language = AppLanguage::English);
 
 template <typename Container>
 void trim_history(Container& history, std::chrono::minutes duration) {

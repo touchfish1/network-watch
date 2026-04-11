@@ -22,7 +22,7 @@ void test_alert_triggers_after_sustain() {
     rule.sustain_for = 2s;
     rule.cooldown_for = 60s;
 
-    network_watch::AlertEngine engine({rule});
+    network_watch::AlertEngine engine({rule}, network_watch::AppLanguage::English);
     const auto base = network_watch::Clock::now();
 
     auto events = engine.evaluate(make_delta(base, 81.0, 40.0));
@@ -45,7 +45,7 @@ void test_alert_recovers() {
     rule.sustain_for = 1s;
     rule.cooldown_for = 10s;
 
-    network_watch::AlertEngine engine({rule});
+    network_watch::AlertEngine engine({rule}, network_watch::AppLanguage::English);
     const auto base = network_watch::Clock::now();
 
     engine.evaluate(make_delta(base, 20.0, 20.0, false));
@@ -65,7 +65,7 @@ void test_alert_message_is_human_readable() {
     rule.sustain_for = 1s;
     rule.cooldown_for = 30s;
 
-    network_watch::AlertEngine engine({rule});
+    network_watch::AlertEngine engine({rule}, network_watch::AppLanguage::English);
     const auto base = network_watch::Clock::now();
 
     engine.evaluate(make_delta(base, 10.0, 95.0));
@@ -75,10 +75,28 @@ void test_alert_message_is_human_readable() {
     network_watch::test::expect(events.front().message.find("95.0%") != std::string::npos, "message should include formatted value");
 }
 
+void test_alert_message_can_localize() {
+    network_watch::AlertRule rule;
+    rule.id = "memory";
+    rule.metric = network_watch::AlertMetric::MemoryUsage;
+    rule.threshold = 90.0;
+    rule.sustain_for = 1s;
+    rule.cooldown_for = 30s;
+
+    network_watch::AlertEngine engine({rule}, network_watch::AppLanguage::SimplifiedChinese);
+    const auto base = network_watch::Clock::now();
+
+    engine.evaluate(make_delta(base, 10.0, 95.0));
+    auto events = engine.evaluate(make_delta(base + 1s, 10.0, 95.0));
+    network_watch::test::expect(events.size() == 1, "localized alert should trigger");
+    network_watch::test::expect(events.front().message.find("内存") != std::string::npos, "message should localize metric");
+}
+
 }  // namespace
 
 void run_alert_engine_tests() {
     test_alert_triggers_after_sustain();
     test_alert_recovers();
     test_alert_message_is_human_readable();
+    test_alert_message_can_localize();
 }

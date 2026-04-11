@@ -34,25 +34,18 @@ std::string format_value(AlertMetric metric, double value) {
     return "unknown";
 }
 
-std::string metric_label(AlertMetric metric) {
-    switch (metric) {
-        case AlertMetric::CpuUsage:
-            return "CPU";
-        case AlertMetric::MemoryUsage:
-            return "Memory";
-        case AlertMetric::DownloadRate:
-            return "Download";
-        case AlertMetric::UploadRate:
-            return "Upload";
-        case AlertMetric::NetworkDisconnected:
-            return "Network";
+std::string format_value(AlertMetric metric, double value, AppLanguage language) {
+    if (metric == AlertMetric::NetworkDisconnected) {
+        return localized_network_state(value >= 0.5, language);
     }
-    return "Metric";
+
+    return format_value(metric, value);
 }
 
 }  // namespace
 
-AlertEngine::AlertEngine(std::vector<AlertRule> rules) : rules_(std::move(rules)) {}
+AlertEngine::AlertEngine(std::vector<AlertRule> rules, AppLanguage language)
+    : rules_(std::move(rules)), language_(language) {}
 
 std::vector<AlertEvent> AlertEngine::evaluate(const MetricDelta& delta) {
     std::vector<AlertEvent> events;
@@ -133,14 +126,30 @@ bool AlertEngine::is_breaching(const AlertRule& rule, const MetricDelta& delta, 
 
 std::string AlertEngine::build_message(const AlertRule& rule, AlertState state, double value) const {
     std::ostringstream output;
-    if (state == AlertState::Triggered) {
-        output << metric_label(rule.metric) << " alert triggered";
+    const auto metric = localized_metric_label(rule.metric, language_);
+    if (language_ == AppLanguage::SimplifiedChinese) {
+        output << metric;
+        if (state == AlertState::Triggered) {
+            output << " 告警已触发";
+        } else {
+            output << " 已恢复";
+        }
+        output << "：当前值 " << format_value(rule.metric, value, language_);
+        if (rule.metric != AlertMetric::NetworkDisconnected) {
+            output << "，阈值 " << (rule.trigger_when_below ? "< " : "> ")
+                   << format_value(rule.metric, rule.threshold, language_);
+        }
     } else {
-        output << metric_label(rule.metric) << " recovered";
-    }
-    output << ": current " << format_value(rule.metric, value);
-    if (rule.metric != AlertMetric::NetworkDisconnected) {
-        output << ", threshold " << (rule.trigger_when_below ? "< " : "> ") << format_value(rule.metric, rule.threshold);
+        if (state == AlertState::Triggered) {
+            output << metric << " alert triggered";
+        } else {
+            output << metric << " recovered";
+        }
+        output << ": current " << format_value(rule.metric, value, language_);
+        if (rule.metric != AlertMetric::NetworkDisconnected) {
+            output << ", threshold " << (rule.trigger_when_below ? "< " : "> ")
+                   << format_value(rule.metric, rule.threshold, language_);
+        }
     }
     return output.str();
 }

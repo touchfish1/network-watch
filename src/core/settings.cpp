@@ -141,6 +141,9 @@ Settings load_settings(const std::filesystem::path& path) {
     if (const auto it = values.find("tray_refresh_interval_ms"); it != values.end()) {
         settings.tray_refresh_interval = std::chrono::milliseconds(std::stoll(it->second));
     }
+    if (const auto it = values.find("language"); it != values.end()) {
+        settings.language = app_language_from_string(it->second);
+    }
     if (const auto it = values.find("notifications_enabled"); it != values.end()) {
         settings.notifications_enabled = to_bool(it->second);
     }
@@ -197,6 +200,7 @@ void save_settings(const std::filesystem::path& path, const Settings& settings) 
 
     output << "sample_interval_ms=" << settings.sample_interval.count() << '\n';
     output << "tray_refresh_interval_ms=" << settings.tray_refresh_interval.count() << '\n';
+    output << "language=" << to_string(settings.language) << '\n';
     output << "notifications_enabled=" << (settings.notifications_enabled ? "true" : "false") << '\n';
     output << "notification_snooze_until_epoch_seconds="
            << (settings.notification_snooze_until_epoch_seconds.has_value() ? *settings.notification_snooze_until_epoch_seconds : 0)

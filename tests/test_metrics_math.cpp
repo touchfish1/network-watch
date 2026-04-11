@@ -45,12 +45,15 @@ void test_tray_summary() {
     delta.upload_bytes_per_second = 1024.0;
     delta.network_connected = true;
 
-    const auto summary = network_watch::build_tray_summary(delta);
+    const auto summary = network_watch::build_tray_summary(delta, network_watch::AppLanguage::English);
     network_watch::test::expect(summary.warning, "high cpu should set warning");
     network_watch::test::expect(summary.title.find("CPU") != std::string::npos, "summary title should contain cpu");
     network_watch::test::expect(summary.title.find("MEM") != std::string::npos, "summary title should contain memory");
     network_watch::test::expect(summary.title.find("Down") != std::string::npos, "summary title should contain rate");
     network_watch::test::expect(summary.tooltip.find("Network online") != std::string::npos, "summary tooltip should contain connectivity");
+
+    const auto chinese = network_watch::build_tray_summary(delta, network_watch::AppLanguage::SimplifiedChinese);
+    network_watch::test::expect(chinese.title.find("内存") != std::string::npos, "summary title should localize memory");
 }
 
 }  // namespace
