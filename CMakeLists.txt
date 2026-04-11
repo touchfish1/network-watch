@@ -47,6 +47,14 @@ endif()
 target_include_directories(network_watch_platform PUBLIC include)
 target_link_libraries(network_watch_platform PUBLIC network_watch_core)
 
+if(WIN32)
+    target_link_libraries(network_watch_platform PRIVATE iphlpapi shell32 user32 ws2_32)
+elseif(APPLE)
+    find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    target_link_libraries(network_watch_platform PRIVATE ${APPKIT_FRAMEWORK} ${FOUNDATION_FRAMEWORK})
+endif()
+
 add_executable(network_watch src/main.cpp)
 target_link_libraries(network_watch PRIVATE network_watch_core network_watch_platform)
 

@@ -47,7 +47,10 @@ void test_tray_summary() {
 
     const auto summary = network_watch::build_tray_summary(delta);
     network_watch::test::expect(summary.warning, "high cpu should set warning");
+    network_watch::test::expect(summary.title.find("CPU") != std::string::npos, "summary title should contain cpu");
+    network_watch::test::expect(summary.title.find("MEM") != std::string::npos, "summary title should contain memory");
     network_watch::test::expect(summary.title.find("Down") != std::string::npos, "summary title should contain rate");
+    network_watch::test::expect(summary.tooltip.find("Network online") != std::string::npos, "summary tooltip should contain connectivity");
 }
 
 }  // namespace

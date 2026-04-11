@@ -95,12 +95,17 @@ TraySummary build_tray_summary(const MetricDelta& delta) {
     summary.warning = delta.cpu_usage_percent >= 85.0 || delta.memory_usage_percent >= 90.0 || !delta.network_connected;
 
     std::ostringstream title;
-    title << "Down " << format_rate(delta.download_bytes_per_second) << " | Up " << format_rate(delta.upload_bytes_per_second);
+    title << "CPU " << std::fixed << std::setprecision(0) << delta.cpu_usage_percent << "% | "
+          << "MEM " << delta.memory_usage_percent << "% | "
+          << "Down " << format_rate(delta.download_bytes_per_second) << " | "
+          << "Up " << format_rate(delta.upload_bytes_per_second);
     summary.title = title.str();
 
     std::ostringstream tooltip;
     tooltip << "CPU " << std::fixed << std::setprecision(1) << delta.cpu_usage_percent << "%, "
             << "Memory " << delta.memory_usage_percent << "%, "
+            << "Down " << format_rate(delta.download_bytes_per_second) << ", "
+            << "Up " << format_rate(delta.upload_bytes_per_second) << ", "
             << "Network " << (delta.network_connected ? "online" : "offline");
     summary.tooltip = tooltip.str();
 
