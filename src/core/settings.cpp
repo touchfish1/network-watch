@@ -1,5 +1,6 @@
 #include "network_watch/settings.hpp"
 
+#include <ctime>
 #include <cstdlib>
 #include <fstream>
 #include <sstream>
@@ -68,6 +69,16 @@ AlertRule make_rule(
     rule.trigger_when_below = trigger_when_below;
     rule.enabled = true;
     return rule;
+}
+
+std::tm to_local_time(std::time_t value) {
+    std::tm result {};
+#if defined(_WIN32)
+    localtime_s(&result, &value);
+#else
+    localtime_r(&value, &result);
+#endif
+    return result;
 }
 
 }  // namespace
@@ -220,8 +231,7 @@ bool quiet_hours_active(const Settings& settings, std::chrono::system_clock::tim
     }
 
     const auto current_time = std::chrono::system_clock::to_time_t(now);
-    std::tm local_tm {};
-    localtime_r(&current_time, &local_tm);
+    const auto local_tm = to_local_time(current_time);
     const int current_minute = local_tm.tm_hour * 60 + local_tm.tm_min;
 
     if (start < end) {
