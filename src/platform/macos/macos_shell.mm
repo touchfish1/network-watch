@@ -3,7 +3,7 @@
 #import <AppKit/AppKit.h>
 #include <dispatch/dispatch.h>
 
-#include <algorithm>
+#include <ctime>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -42,20 +42,52 @@ std::string format_percent(double value) {
     return output.str();
 }
 
+std::string format_timestamp(const TimePoint& timestamp) {
+    const auto value = Clock::to_time_t(timestamp);
+    std::tm tm_value {};
+    localtime_r(&value, &tm_value);
+
+    std::ostringstream output;
+    output << std::put_time(&tm_value, "%Y-%m-%d %H:%M:%S");
+    return output.str();
+}
+
+std::string build_interfaces_text(const MetricDelta& latest) {
+    if (latest.interfaces.empty()) {
+        return "No active interfaces detected yet.";
+    }
+
+    std::ostringstream output;
+    bool first = true;
+    for (const auto& item : latest.interfaces) {
+        if (!first) {
+            output << "\n";
+        }
+        first = false;
+        output << item.name << " | "
+               << (item.is_up ? "up" : "down") << " | "
+               << "Down " << format_rate(item.rx_bytes_per_second) << " | "
+               << "Up " << format_rate(item.tx_bytes_per_second);
+        if (!item.address.empty()) {
+            output << " | " << item.address;
+        }
+    }
+    return output.str();
+}
+
 NSString* to_ns_string(const std::string& value) {
     return [NSString stringWithUTF8String:value.c_str()];
 }
 
-std::string build_monitor_text(const MetricDelta& latest) {
-    std::ostringstream body;
-    body << "CPU: " << format_percent(latest.cpu_usage_percent) << "\n"
-         << "Memory: " << format_percent(latest.memory_usage_percent) << " ("
-         << format_bytes(static_cast<double>(latest.memory_used_bytes)) << " / "
-         << format_bytes(static_cast<double>(latest.memory_total_bytes)) << ")\n"
-         << "Download: " << format_rate(latest.download_bytes_per_second) << "\n"
-         << "Upload: " << format_rate(latest.upload_bytes_per_second) << "\n"
-         << "Network: " << (latest.network_connected ? "online" : "offline");
-    return body.str();
+NSTextField* make_label(NSView* parent, NSRect frame, CGFloat font_size, NSFontWeight weight) {
+    NSTextField* label = [[NSTextField alloc] initWithFrame:frame];
+    [label setBezeled:NO];
+    [label setEditable:NO];
+    [label setDrawsBackground:NO];
+    [label setSelectable:YES];
+    [label setFont:[NSFont systemFontOfSize:font_size weight:weight]];
+    [parent addSubview:label];
+    return label;
 }
 
 class MacOSTrayAdapter;
@@ -127,7 +159,7 @@ public:
             summary_ = summary;
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-          this->apply_summary();
+            this->apply_summary();
         });
     }
 
@@ -138,7 +170,7 @@ public:
             history_ = history;
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-          this->present_monitor();
+            this->show_monitor_window();
         });
     }
 
@@ -150,7 +182,8 @@ public:
             summary_ = build_tray_summary(latest);
         }
         dispatch_async(dispatch_get_main_queue(), ^{
-          this->apply_summary();
+            this->apply_summary();
+            this->refresh_monitor_window();
         });
     }
 
@@ -158,6 +191,16 @@ public:
         if (!initialized_) {
             return;
         }
+
+        monitor_window_ = nil;
+        summary_label_ = nil;
+        updated_label_ = nil;
+        cpu_label_ = nil;
+        memory_label_ = nil;
+        download_label_ = nil;
+        upload_label_ = nil;
+        network_label_ = nil;
+        interfaces_text_view_ = nil;
 
         if (status_item_ != nil) {
             [[NSStatusBar systemStatusBar] removeStatusItem:status_item_];
@@ -178,28 +221,76 @@ public:
 
     void request_quit() {
         dispatch_async(dispatch_get_main_queue(), ^{
-          [NSApp terminate:nil];
+            [NSApp terminate:nil];
         });
     }
 
-    void present_monitor() {
-        std::optional<MetricDelta> latest;
-        {
-            std::scoped_lock lock(mutex_);
-            latest = latest_;
-        }
-
-        NSAlert* alert = [[NSAlert alloc] init];
-        [alert setMessageText:@"Network Watch"];
-        [alert setInformativeText:latest.has_value()
-            ? to_ns_string(build_monitor_text(*latest))
-            : @"Waiting for the first metrics sample..."];
-        [alert addButtonWithTitle:@"OK"];
+    void show_monitor_window() {
+        create_monitor_window_if_needed();
+        refresh_monitor_window();
         [NSApp activateIgnoringOtherApps:YES];
-        [alert runModal];
+        [monitor_window_ makeKeyAndOrderFront:nil];
     }
 
 private:
+    void create_monitor_window_if_needed() {
+        if (monitor_window_ != nil) {
+            return;
+        }
+
+        monitor_window_ = [[NSWindow alloc]
+            initWithContentRect:NSMakeRect(0, 0, 760, 520)
+                      styleMask:(NSWindowStyleMaskTitled |
+                                 NSWindowStyleMaskClosable |
+                                 NSWindowStyleMaskMiniaturizable |
+                                 NSWindowStyleMaskResizable)
+                        backing:NSBackingStoreBuffered
+                          defer:NO];
+        [monitor_window_ setTitle:@"Network Watch Monitor"];
+        [monitor_window_ center];
+        [monitor_window_ setReleasedWhenClosed:NO];
+
+        NSView* content = [monitor_window_ contentView];
+
+        CGFloat y = 476.0;
+        NSTextField* overview_label = make_label(content, NSMakeRect(20, y, 300, 24), 15.0, NSFontWeightSemibold);
+        [overview_label setStringValue:@"Overview"];
+        y -= 34.0;
+        summary_label_ = make_label(content, NSMakeRect(20, y, 720, 22), 13.0, NSFontWeightRegular);
+        [summary_label_ setStringValue:@"Waiting for the first metrics sample..."];
+        y -= 28.0;
+        updated_label_ = make_label(content, NSMakeRect(20, y, 720, 22), 12.0, NSFontWeightRegular);
+        [updated_label_ setStringValue:@"Last updated: --"];
+        y -= 38.0;
+
+        cpu_label_ = make_label(content, NSMakeRect(20, y, 330, 22), 13.0, NSFontWeightRegular);
+        memory_label_ = make_label(content, NSMakeRect(380, y, 330, 22), 13.0, NSFontWeightRegular);
+        y -= 30.0;
+
+        download_label_ = make_label(content, NSMakeRect(20, y, 330, 22), 13.0, NSFontWeightRegular);
+        upload_label_ = make_label(content, NSMakeRect(380, y, 330, 22), 13.0, NSFontWeightRegular);
+        y -= 30.0;
+
+        network_label_ = make_label(content, NSMakeRect(20, y, 330, 22), 13.0, NSFontWeightRegular);
+        y -= 42.0;
+
+        NSTextField* interfaces_label = make_label(content, NSMakeRect(20, y, 300, 24), 15.0, NSFontWeightSemibold);
+        [interfaces_label setStringValue:@"Interfaces"];
+        y -= 234.0;
+
+        NSScrollView* scroll_view = [[NSScrollView alloc] initWithFrame:NSMakeRect(20, y, 720, 220)];
+        [scroll_view setBorderType:NSBezelBorder];
+        [scroll_view setHasVerticalScroller:YES];
+        [scroll_view setAutohidesScrollers:YES];
+
+        interfaces_text_view_ = [[NSTextView alloc] initWithFrame:NSMakeRect(0, 0, 720, 220)];
+        [interfaces_text_view_ setEditable:NO];
+        [interfaces_text_view_ setSelectable:YES];
+        [interfaces_text_view_ setFont:[NSFont monospacedSystemFontOfSize:12.0 weight:NSFontWeightRegular]];
+        [scroll_view setDocumentView:interfaces_text_view_];
+        [content addSubview:scroll_view];
+    }
+
     void apply_summary() {
         if (status_item_ == nil) {
             return;
@@ -231,6 +322,48 @@ private:
         }
     }
 
+    void refresh_monitor_window() {
+        if (monitor_window_ == nil) {
+            return;
+        }
+
+        std::optional<MetricDelta> latest;
+        {
+            std::scoped_lock lock(mutex_);
+            latest = latest_;
+        }
+
+        if (!latest.has_value()) {
+            [summary_label_ setStringValue:@"Waiting for the first metrics sample..."];
+            [updated_label_ setStringValue:@"Last updated: --"];
+            [cpu_label_ setStringValue:@"CPU: --"];
+            [memory_label_ setStringValue:@"Memory: --"];
+            [download_label_ setStringValue:@"Download: --"];
+            [upload_label_ setStringValue:@"Upload: --"];
+            [network_label_ setStringValue:@"Network: --"];
+            [[interfaces_text_view_ textStorage] setAttributedString:[[NSAttributedString alloc] initWithString:@"No interface data available yet."]];
+            return;
+        }
+
+        [summary_label_ setStringValue:to_ns_string(build_tray_summary(*latest).tooltip)];
+        [updated_label_ setStringValue:to_ns_string("Last updated: " + format_timestamp(latest->timestamp))];
+        [cpu_label_ setStringValue:to_ns_string("CPU: " + format_percent(latest->cpu_usage_percent))];
+        [memory_label_ setStringValue:to_ns_string(
+            "Memory: " + format_percent(latest->memory_usage_percent) + " (" +
+            format_bytes(static_cast<double>(latest->memory_used_bytes)) + " / " +
+            format_bytes(static_cast<double>(latest->memory_total_bytes)) + ")")];
+        [download_label_ setStringValue:to_ns_string("Download: " + format_rate(latest->download_bytes_per_second))];
+        [upload_label_ setStringValue:to_ns_string("Upload: " + format_rate(latest->upload_bytes_per_second))];
+        [network_label_ setStringValue:to_ns_string(
+            std::string("Network: ") + (latest->network_connected ? "online" : "offline"))];
+
+        [[interfaces_text_view_ textStorage] setAttributedString:[[NSAttributedString alloc]
+            initWithString:to_ns_string(build_interfaces_text(*latest))
+                    attributes:@{
+                        NSFontAttributeName: [NSFont monospacedSystemFontOfSize:12.0 weight:NSFontWeightRegular]
+                    }]];
+    }
+
     std::mutex mutex_;
     TraySummary summary_ {};
     std::optional<MetricDelta> latest_ {};
@@ -241,6 +374,15 @@ private:
     NSMenuItem* summary_item_ = nil;
     NSMenuItem* cpu_memory_item_ = nil;
     NSMenuItem* network_item_ = nil;
+    NSWindow* monitor_window_ = nil;
+    NSTextField* summary_label_ = nil;
+    NSTextField* updated_label_ = nil;
+    NSTextField* cpu_label_ = nil;
+    NSTextField* memory_label_ = nil;
+    NSTextField* download_label_ = nil;
+    NSTextField* upload_label_ = nil;
+    NSTextField* network_label_ = nil;
+    NSTextView* interfaces_text_view_ = nil;
     NetworkWatchStatusDelegate* delegate_ = nil;
     bool initialized_ = false;
 };
@@ -260,7 +402,7 @@ private:
 - (void)openMonitor:(id)sender {
     (void)sender;
     if (adapter_ != nullptr) {
-        adapter_->present_monitor();
+        adapter_->show_monitor_window();
     }
 }
 
