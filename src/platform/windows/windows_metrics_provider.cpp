@@ -94,6 +94,7 @@ private:
 
     static bool read_network(MetricSample& sample) {
         std::unordered_map<NET_IFINDEX, std::string> interface_addresses;
+        std::unordered_map<NET_IFINDEX, std::string> interface_names;
         ULONG address_buffer_size = 16 * 1024;
         std::vector<unsigned char> address_buffer(address_buffer_size);
         auto* adapter_addresses = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(address_buffer.data());
@@ -118,6 +119,14 @@ private:
 
         if (address_result == NO_ERROR) {
             for (auto* adapter = adapter_addresses; adapter != nullptr; adapter = adapter->Next) {
+                const auto friendly_name = wide_to_utf8(adapter->FriendlyName);
+                if (adapter->IfIndex != 0 && !friendly_name.empty() && !interface_names.contains(adapter->IfIndex)) {
+                    interface_names.emplace(adapter->IfIndex, friendly_name);
+                }
+                if (adapter->Ipv6IfIndex != 0 && !friendly_name.empty() && !interface_names.contains(adapter->Ipv6IfIndex)) {
+                    interface_names.emplace(adapter->Ipv6IfIndex, friendly_name);
+                }
+
                 for (auto* unicast = adapter->FirstUnicastAddress; unicast != nullptr; unicast = unicast->Next) {
                     if (unicast->Address.lpSockaddr == nullptr) {
                         continue;
@@ -149,27 +158,37 @@ private:
             }
         }
 
-        MIB_IF_TABLE2* interface_table = nullptr;
-        if (GetIfTable2(&interface_table) != NO_ERROR || interface_table == nullptr) {
+        ULONG table_buffer_size = 0;
+        if (GetIfTable(nullptr, &table_buffer_size, FALSE) != ERROR_INSUFFICIENT_BUFFER || table_buffer_size == 0) {
             return false;
         }
 
-        for (ULONG index = 0; index < interface_table->NumEntries; ++index) {
-            const auto& row = interface_table->Table[index];
-            if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK || row.Type == IF_TYPE_TUNNEL) {
+        std::vector<unsigned char> table_buffer(table_buffer_size);
+        auto* interface_table = reinterpret_cast<MIB_IFTABLE*>(table_buffer.data());
+        if (GetIfTable(interface_table, &table_buffer_size, FALSE) != NO_ERROR) {
+            return false;
+        }
+
+        for (ULONG index = 0; index < interface_table->dwNumEntries; ++index) {
+            const auto& row = interface_table->table[index];
+            if (row.dwType == IF_TYPE_SOFTWARE_LOOPBACK || row.dwType == IF_TYPE_TUNNEL) {
                 continue;
             }
 
             NetworkInterfaceSample item;
-            item.name = wide_to_utf8(row.Alias);
-            if (item.name.empty()) {
-                item.name = wide_to_utf8(row.Description);
+            if (const auto name = interface_names.find(row.dwIndex); name != interface_names.end()) {
+                item.name = name->second;
+            } else if (row.dwDescrLen > 0) {
+                item.name.assign(reinterpret_cast<const char*>(row.bDescr), reinterpret_cast<const char*>(row.bDescr) + row.dwDescrLen);
             }
-            item.rx_bytes = row.InOctets;
-            item.tx_bytes = row.OutOctets;
-            item.is_up = row.OperStatus == IfOperStatusUp;
+            if (item.name.empty()) {
+                item.name = "if-" + std::to_string(row.dwIndex);
+            }
+            item.rx_bytes = row.dwInOctets;
+            item.tx_bytes = row.dwOutOctets;
+            item.is_up = row.dwOperStatus == IF_OPER_STATUS_OPERATIONAL;
 
-            if (const auto address = interface_addresses.find(row.InterfaceIndex); address != interface_addresses.end()) {
+            if (const auto address = interface_addresses.find(row.dwIndex); address != interface_addresses.end()) {
                 item.address = address->second;
             }
 
@@ -179,7 +198,6 @@ private:
             sample.interfaces.push_back(std::move(item));
         }
 
-        FreeMibTable(interface_table);
         return true;
     }
 };
