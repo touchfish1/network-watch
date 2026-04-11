@@ -49,7 +49,9 @@
 - `/proc/stat` 读取 CPU 原始计数
 - `/proc/meminfo` 读取内存使用
 - `/proc/net/dev` + `getifaddrs()` 读取网络流量与接口状态
-- 控制台版 tray/window adapter 用于验证共享核心行为
+- Ayatana AppIndicator 托盘标签与菜单
+- GTK 监控窗口，包含总览、趋势图、接口列表和告警面板
+- `libnotify` 桌面通知
 
 后续引入 GTK/AppIndicator 时，只需替换 Linux shell 中的 UI 适配器，不需要改共享核心。
 
