@@ -24,6 +24,7 @@ add_library(network_watch_core
 )
 
 target_include_directories(network_watch_core PUBLIC include)
+target_compile_definitions(network_watch_core PUBLIC NETWORK_WATCH_VERSION="${NETWORK_WATCH_EFFECTIVE_VERSION}")
 
 target_compile_features(network_watch_core PUBLIC cxx_std_20)
 
@@ -49,7 +50,7 @@ target_include_directories(network_watch_platform PUBLIC include)
 target_link_libraries(network_watch_platform PUBLIC network_watch_core)
 
 if(WIN32)
-    target_link_libraries(network_watch_platform PRIVATE iphlpapi shell32 user32 ws2_32)
+    target_link_libraries(network_watch_platform PRIVATE iphlpapi shell32 user32 ws2_32 winhttp)
 elseif(APPLE)
     find_library(APPKIT_FRAMEWORK AppKit REQUIRED)
     find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
@@ -77,7 +78,13 @@ endif()
 include(GNUInstallDirs)
 include(InstallRequiredSystemLibraries)
 
-install(TARGETS network_watch RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+if(WIN32)
+    set(NETWORK_WATCH_INSTALL_RUNTIME_DESTINATION ".")
+else()
+    set(NETWORK_WATCH_INSTALL_RUNTIME_DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+install(TARGETS network_watch RUNTIME DESTINATION ${NETWORK_WATCH_INSTALL_RUNTIME_DESTINATION})
 
 if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
     install(PROGRAMS ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -122,7 +129,13 @@ set(CPACK_PACKAGE_INSTALL_DIRECTORY "network-watch")
 set(CPACK_PACKAGE_FILE_NAME "network-watch-${NETWORK_WATCH_EFFECTIVE_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
 
 if(WIN32)
-    set(CPACK_GENERATOR "ZIP")
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_PACKAGE_EXECUTABLES "network_watch" "Network Watch")
+    set(CPACK_CREATE_DESKTOP_LINKS "network_watch")
+    set(CPACK_NSIS_DISPLAY_NAME "Network Watch")
+    set(CPACK_NSIS_PACKAGE_NAME "Network Watch")
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    set(CPACK_NSIS_MUI_FINISHPAGE_RUN "network_watch.exe")
 else()
     set(CPACK_GENERATOR "TGZ")
 endif()

@@ -2,8 +2,11 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <winhttp.h>
 
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <memory>
 #include <mutex>
@@ -11,6 +14,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace network_watch {
 
@@ -31,8 +36,12 @@ constexpr UINT kMenuCpuMemoryId = 1002;
 constexpr UINT kMenuNetworkId = 1003;
 constexpr UINT kMenuOpenId = 1004;
 constexpr UINT kMenuQuitId = 1005;
+constexpr UINT kMenuCheckUpdatesId = 1006;
+constexpr UINT kUpdateCheckCompletedMessage = WM_APP + 5;
 constexpr wchar_t kHostWindowClassName[] = L"NetworkWatchTrayWindow";
 constexpr wchar_t kMonitorWindowClassName[] = L"NetworkWatchMonitorWindow";
+constexpr wchar_t kReleaseApiHost[] = L"api.github.com";
+constexpr wchar_t kReleaseApiPath[] = L"/repos/touchfish1/network-watch/releases/latest";
 
 std::string format_bytes(double bytes) {
     static const char* units[] = {"B", "KB", "MB", "GB", "TB"};
@@ -120,6 +129,356 @@ std::wstring truncate_tip(const std::wstring& text) {
     return text.substr(0, kMaxTipLength - 3) + L"...";
 }
 
+std::string current_app_version() {
+#ifdef NETWORK_WATCH_VERSION
+    return NETWORK_WATCH_VERSION;
+#else
+    return "0.0.0";
+#endif
+}
+
+std::string trim_version_prefix(std::string value) {
+    if (!value.empty() && (value.front() == 'v' || value.front() == 'V')) {
+        value.erase(value.begin());
+    }
+    return value;
+}
+
+int compare_versions(const std::string& lhs, const std::string& rhs) {
+    std::istringstream lhs_stream(trim_version_prefix(lhs));
+    std::istringstream rhs_stream(trim_version_prefix(rhs));
+    for (;;) {
+        std::string lhs_token;
+        std::string rhs_token;
+        const bool has_lhs = static_cast<bool>(std::getline(lhs_stream, lhs_token, '.'));
+        const bool has_rhs = static_cast<bool>(std::getline(rhs_stream, rhs_token, '.'));
+        if (!has_lhs && !has_rhs) {
+            break;
+        }
+
+        const int lhs_value = lhs_token.empty() ? 0 : std::stoi(lhs_token);
+        const int rhs_value = rhs_token.empty() ? 0 : std::stoi(rhs_token);
+        if (lhs_value != rhs_value) {
+            return lhs_value < rhs_value ? -1 : 1;
+        }
+    }
+
+    return 0;
+}
+
+std::string json_unescape(const std::string& value) {
+    std::string result;
+    result.reserve(value.size());
+
+    bool escaping = false;
+    for (char ch : value) {
+        if (escaping) {
+            switch (ch) {
+                case '\\': result.push_back('\\'); break;
+                case '"': result.push_back('"'); break;
+                case '/': result.push_back('/'); break;
+                case 'n': result.push_back('\n'); break;
+                case 'r': result.push_back('\r'); break;
+                case 't': result.push_back('\t'); break;
+                default: result.push_back(ch); break;
+            }
+            escaping = false;
+            continue;
+        }
+        if (ch == '\\') {
+            escaping = true;
+            continue;
+        }
+        result.push_back(ch);
+    }
+
+    return result;
+}
+
+bool extract_json_string(const std::string& json, const std::string& key, std::size_t start, std::string& value, std::size_t* next_pos = nullptr) {
+    const auto key_pattern = std::string("\"") + key + "\"";
+    const auto key_pos = json.find(key_pattern, start);
+    if (key_pos == std::string::npos) {
+        return false;
+    }
+
+    const auto colon_pos = json.find(':', key_pos + key.size() + 2);
+    const auto open_quote = json.find('\"', colon_pos + 1);
+    if (colon_pos == std::string::npos || open_quote == std::string::npos) {
+        return false;
+    }
+
+    std::string raw_value;
+    bool escaping = false;
+    for (std::size_t index = open_quote + 1; index < json.size(); ++index) {
+        const char ch = json[index];
+        if (!escaping && ch == '\"') {
+            value = json_unescape(raw_value);
+            if (next_pos != nullptr) {
+                *next_pos = index + 1;
+            }
+            return true;
+        }
+        raw_value.push_back(ch);
+        escaping = (!escaping && ch == '\\');
+    }
+
+    return false;
+}
+
+bool http_get_text(const std::wstring& host, const std::wstring& path, std::string& body, std::string& error_message) {
+    auto session = WinHttpOpen(L"NetworkWatchUpdater/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (session == nullptr) {
+        error_message = "WinHttpOpen failed";
+        return false;
+    }
+
+    auto close_handles = [&]() {
+        WinHttpCloseHandle(session);
+    };
+
+    HINTERNET connection = WinHttpConnect(session, host.c_str(), INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (connection == nullptr) {
+        error_message = "WinHttpConnect failed";
+        close_handles();
+        return false;
+    }
+
+    HINTERNET request = WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (request == nullptr) {
+        error_message = "WinHttpOpenRequest failed";
+        WinHttpCloseHandle(connection);
+        close_handles();
+        return false;
+    }
+
+    const std::wstring headers =
+        L"User-Agent: NetworkWatch/" + utf8_to_wide(current_app_version()) + L"\r\n"
+        L"Accept: application/vnd.github+json\r\n"
+        L"X-GitHub-Api-Version: 2022-11-28\r\n";
+
+    bool ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+              WinHttpReceiveResponse(request, nullptr);
+
+    if (!ok) {
+        error_message = "WinHTTP request failed";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        close_handles();
+        return false;
+    }
+
+    DWORD status_code = 0;
+    DWORD status_size = sizeof(status_code);
+    if (!WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status_code, &status_size, WINHTTP_NO_HEADER_INDEX) ||
+        status_code != 200) {
+        error_message = "GitHub API returned HTTP " + std::to_string(status_code);
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        close_handles();
+        return false;
+    }
+
+    body.clear();
+    for (;;) {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available)) {
+            error_message = "WinHttpQueryDataAvailable failed";
+            break;
+        }
+        if (available == 0) {
+            ok = true;
+            break;
+        }
+
+        std::string chunk(available, '\0');
+        DWORD downloaded = 0;
+        if (!WinHttpReadData(request, chunk.data(), available, &downloaded)) {
+            error_message = "WinHttpReadData failed";
+            ok = false;
+            break;
+        }
+        chunk.resize(downloaded);
+        body += chunk;
+        ok = true;
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    close_handles();
+    return ok;
+}
+
+bool download_file_https(const std::string& url, const std::filesystem::path& destination, std::string& error_message) {
+    URL_COMPONENTSW components {};
+    components.dwStructSize = sizeof(components);
+    components.dwSchemeLength = static_cast<DWORD>(-1);
+    components.dwHostNameLength = static_cast<DWORD>(-1);
+    components.dwUrlPathLength = static_cast<DWORD>(-1);
+    components.dwExtraInfoLength = static_cast<DWORD>(-1);
+
+    auto wide_url = utf8_to_wide(url);
+    if (!WinHttpCrackUrl(wide_url.c_str(), 0, 0, &components)) {
+        error_message = "WinHttpCrackUrl failed";
+        return false;
+    }
+
+    const std::wstring host(components.lpszHostName, components.dwHostNameLength);
+    std::wstring path(components.lpszUrlPath, components.dwUrlPathLength);
+    if (components.dwExtraInfoLength > 0) {
+        path.append(components.lpszExtraInfo, components.dwExtraInfoLength);
+    }
+
+    auto session = WinHttpOpen(L"NetworkWatchUpdater/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (session == nullptr) {
+        error_message = "WinHttpOpen failed";
+        return false;
+    }
+
+    HINTERNET connection = WinHttpConnect(session, host.c_str(), components.nPort, 0);
+    if (connection == nullptr) {
+        error_message = "WinHttpConnect failed";
+        WinHttpCloseHandle(session);
+        return false;
+    }
+
+    const DWORD flags = components.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET request = WinHttpOpenRequest(connection, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (request == nullptr) {
+        error_message = "WinHttpOpenRequest failed";
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return false;
+    }
+
+    DWORD redirect_policy = WINHTTP_OPTION_REDIRECT_POLICY_ALWAYS;
+    WinHttpSetOption(request, WINHTTP_OPTION_REDIRECT_POLICY, &redirect_policy, sizeof(redirect_policy));
+
+    const std::wstring headers = L"User-Agent: NetworkWatch/" + utf8_to_wide(current_app_version()) + L"\r\n";
+    bool ok = WinHttpSendRequest(request, headers.c_str(), static_cast<DWORD>(headers.size()), WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+              WinHttpReceiveResponse(request, nullptr);
+    if (!ok) {
+        error_message = "Download request failed";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return false;
+    }
+
+    std::filesystem::create_directories(destination.parent_path());
+    std::ofstream output(destination, std::ios::binary);
+    if (!output) {
+        error_message = "Failed to create downloaded installer file";
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connection);
+        WinHttpCloseHandle(session);
+        return false;
+    }
+
+    for (;;) {
+        DWORD available = 0;
+        if (!WinHttpQueryDataAvailable(request, &available)) {
+            error_message = "WinHttpQueryDataAvailable failed";
+            ok = false;
+            break;
+        }
+        if (available == 0) {
+            ok = true;
+            break;
+        }
+
+        std::vector<char> buffer(available);
+        DWORD downloaded = 0;
+        if (!WinHttpReadData(request, buffer.data(), available, &downloaded)) {
+            error_message = "WinHttpReadData failed";
+            ok = false;
+            break;
+        }
+        output.write(buffer.data(), downloaded);
+    }
+
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connection);
+    WinHttpCloseHandle(session);
+    output.close();
+
+    if (!ok) {
+        std::error_code ignored;
+        std::filesystem::remove(destination, ignored);
+    }
+    return ok;
+}
+
+struct UpdateCheckResult {
+    enum class Status {
+        UpToDate,
+        Downloaded,
+        Failed,
+    };
+
+    Status status = Status::Failed;
+    std::string latest_version;
+    std::wstring installer_path;
+    std::string message;
+};
+
+UpdateCheckResult check_for_installer_update() {
+    UpdateCheckResult result;
+    std::string body;
+    std::string error_message;
+    if (!http_get_text(kReleaseApiHost, kReleaseApiPath, body, error_message)) {
+        result.message = std::move(error_message);
+        return result;
+    }
+
+    if (!extract_json_string(body, "tag_name", 0, result.latest_version, nullptr)) {
+        result.message = "Failed to parse latest release tag";
+        return result;
+    }
+
+    if (compare_versions(current_app_version(), result.latest_version) >= 0) {
+        result.status = UpdateCheckResult::Status::UpToDate;
+        result.message = "Already on the latest version";
+        return result;
+    }
+
+    std::size_t search_pos = 0;
+    std::string download_url;
+    while (extract_json_string(body, "browser_download_url", search_pos, download_url, &search_pos)) {
+        const bool is_windows_installer =
+            download_url.ends_with(".exe") &&
+            (download_url.find("Windows") != std::string::npos || download_url.find("windows") != std::string::npos);
+        if (is_windows_installer) {
+            break;
+        }
+        download_url.clear();
+    }
+
+    if (download_url.empty()) {
+        result.message = "Latest release does not contain a Windows installer asset";
+        return result;
+    }
+
+    const auto filename_pos = download_url.find_last_of('/');
+    const auto filename = filename_pos == std::string::npos ? "network-watch-update.exe" : download_url.substr(filename_pos + 1);
+    wchar_t temp_path_buffer[MAX_PATH] = {};
+    if (GetTempPathW(MAX_PATH, temp_path_buffer) == 0) {
+        result.message = "Failed to locate Windows temp directory";
+        return result;
+    }
+
+    result.installer_path = std::filesystem::path(temp_path_buffer) / utf8_to_wide(filename);
+    if (!download_file_https(download_url, result.installer_path, error_message)) {
+        result.message = std::move(error_message);
+        result.installer_path.clear();
+        return result;
+    }
+
+    result.status = UpdateCheckResult::Status::Downloaded;
+    result.message = "Update downloaded";
+    return result;
+}
+
 void set_control_text(HWND control, const std::string& text) {
     SetWindowTextW(control, utf8_to_wide(text).c_str());
 }
@@ -184,20 +543,27 @@ public:
         AppendMenuW(
             menu_,
             MF_STRING,
+            kMenuCheckUpdatesId,
+            utf8_to_wide(language == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates").c_str());
+        AppendMenuW(
+            menu_,
+            MF_STRING,
             kMenuQuitId,
             utf8_to_wide(language == AppLanguage::SimplifiedChinese ? "退出" : "Quit").c_str());
 
         tray_icon_.cbSize = sizeof(tray_icon_);
         tray_icon_.hWnd = host_hwnd_;
         tray_icon_.uID = 1;
-        tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+        tray_icon_.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP;
         tray_icon_.uCallbackMessage = kTrayCallbackMessage;
         tray_icon_.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
         lstrcpynW(tray_icon_.szTip, utf8_to_wide(localized_app_name(language)).c_str(), ARRAYSIZE(tray_icon_.szTip));
+        tray_icon_.uVersion = NOTIFYICON_VERSION_4;
 
         if (!Shell_NotifyIconW(NIM_ADD, &tray_icon_)) {
             throw std::runtime_error("Failed to create Windows notification area icon");
         }
+        Shell_NotifyIconW(NIM_SETVERSION, &tray_icon_);
 
         initialized_ = true;
     }
@@ -353,6 +719,9 @@ private:
                     case kMenuOpenId:
                         show_monitor_window();
                         return 0;
+                    case kMenuCheckUpdatesId:
+                        begin_update_check();
+                        return 0;
                     case kMenuQuitId:
                         request_quit();
                         return 0;
@@ -367,6 +736,9 @@ private:
                 }
                 destroy_monitor_window();
                 DestroyWindow(host_hwnd_);
+                return 0;
+            case kUpdateCheckCompletedMessage:
+                handle_update_check_completed();
                 return 0;
             case WM_DESTROY:
                 host_hwnd_ = nullptr;
@@ -406,7 +778,7 @@ private:
             latest = latest_;
         }
 
-        tray_icon_.uFlags = NIF_TIP | NIF_ICON;
+        tray_icon_.uFlags = NIF_TIP | NIF_ICON | NIF_SHOWTIP;
         tray_icon_.hIcon = LoadIcon(nullptr, summary.warning ? IDI_WARNING : IDI_APPLICATION);
         const auto tip = truncate_tip(utf8_to_wide(summary.tooltip.empty() ? summary.title : summary.tooltip));
         lstrcpynW(
@@ -448,6 +820,95 @@ private:
         GetCursorPos(&cursor);
         SetForegroundWindow(host_hwnd_);
         TrackPopupMenu(menu_, TPM_BOTTOMALIGN | TPM_LEFTALIGN | TPM_RIGHTBUTTON, cursor.x, cursor.y, 0, host_hwnd_, nullptr);
+    }
+
+    void set_update_menu_label(const std::string& text, bool enabled) {
+        if (menu_ == nullptr) {
+            return;
+        }
+        ModifyMenuW(menu_, kMenuCheckUpdatesId, MF_BYCOMMAND | MF_STRING | (enabled ? 0 : MF_GRAYED), kMenuCheckUpdatesId, utf8_to_wide(text).c_str());
+    }
+
+    void begin_update_check() {
+        {
+            std::scoped_lock lock(mutex_);
+            if (update_check_in_progress_) {
+                return;
+            }
+            update_check_in_progress_ = true;
+        }
+
+        set_update_menu_label(current_language() == AppLanguage::SimplifiedChinese ? "检查更新中..." : "Checking for Updates...", false);
+        std::thread([this]() {
+            UpdateCheckResult result = check_for_installer_update();
+            {
+                std::scoped_lock lock(mutex_);
+                pending_update_result_ = std::move(result);
+            }
+            post_host_message(kUpdateCheckCompletedMessage);
+        }).detach();
+    }
+
+    void handle_update_check_completed() {
+        UpdateCheckResult result;
+        {
+            std::scoped_lock lock(mutex_);
+            update_check_in_progress_ = false;
+            if (!pending_update_result_.has_value()) {
+                return;
+            }
+            result = std::move(*pending_update_result_);
+            pending_update_result_.reset();
+        }
+
+        set_update_menu_label(current_language() == AppLanguage::SimplifiedChinese ? "检查更新" : "Check for Updates", true);
+
+        if (result.status == UpdateCheckResult::Status::UpToDate) {
+            MessageBoxW(
+                host_hwnd_,
+                utf8_to_wide(
+                    current_language() == AppLanguage::SimplifiedChinese
+                        ? "当前已经是最新版本。"
+                        : "You are already running the latest version.")
+                    .c_str(),
+                utf8_to_wide(localized_app_name(current_language())).c_str(),
+                MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+
+        if (result.status == UpdateCheckResult::Status::Failed) {
+            const auto message =
+                (current_language() == AppLanguage::SimplifiedChinese
+                     ? "检查更新失败："
+                     : "Failed to check for updates: ") +
+                result.message;
+            MessageBoxW(
+                host_hwnd_,
+                utf8_to_wide(message).c_str(),
+                utf8_to_wide(localized_app_name(current_language())).c_str(),
+                MB_OK | MB_ICONERROR);
+            return;
+        }
+
+        const auto prompt =
+            (current_language() == AppLanguage::SimplifiedChinese
+                 ? "已下载新版本 "
+                 : "A new version has been downloaded: ") +
+            result.latest_version +
+            (current_language() == AppLanguage::SimplifiedChinese
+                 ? "\n现在启动安装程序并退出当前应用吗？"
+                 : "\nLaunch the installer now and close the current app?");
+        const int choice = MessageBoxW(
+            host_hwnd_,
+            utf8_to_wide(prompt).c_str(),
+            utf8_to_wide(localized_app_name(current_language())).c_str(),
+            MB_YESNO | MB_ICONQUESTION);
+        if (choice != IDYES) {
+            return;
+        }
+
+        ShellExecuteW(nullptr, L"open", result.installer_path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        request_quit();
     }
 
     void create_monitor_window_if_needed() {
@@ -663,6 +1124,8 @@ private:
     TraySummary summary_ {};
     std::optional<MetricDelta> latest_ {};
     HistorySnapshot history_ {};
+    bool update_check_in_progress_ = false;
+    std::optional<UpdateCheckResult> pending_update_result_ {};
 
     HWND host_hwnd_ = nullptr;
     HWND monitor_hwnd_ = nullptr;
