@@ -1,9 +1,56 @@
 #include "network_watch/alert_engine.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
 namespace network_watch {
+
+namespace {
+
+std::string format_value(AlertMetric metric, double value) {
+    std::ostringstream output;
+    output << std::fixed;
+
+    switch (metric) {
+        case AlertMetric::CpuUsage:
+        case AlertMetric::MemoryUsage:
+            output << std::setprecision(1) << value << '%';
+            return output.str();
+        case AlertMetric::DownloadRate:
+        case AlertMetric::UploadRate: {
+            static const char* units[] = {"B/s", "KB/s", "MB/s", "GB/s"};
+            std::size_t unit_index = 0;
+            while (value >= 1024.0 && unit_index < 3) {
+                value /= 1024.0;
+                ++unit_index;
+            }
+            output << std::setprecision(unit_index == 0 ? 0 : 1) << value << ' ' << units[unit_index];
+            return output.str();
+        }
+        case AlertMetric::NetworkDisconnected:
+            return value < 0.5 ? "offline" : "online";
+    }
+    return "unknown";
+}
+
+std::string metric_label(AlertMetric metric) {
+    switch (metric) {
+        case AlertMetric::CpuUsage:
+            return "CPU";
+        case AlertMetric::MemoryUsage:
+            return "Memory";
+        case AlertMetric::DownloadRate:
+            return "Download";
+        case AlertMetric::UploadRate:
+            return "Upload";
+        case AlertMetric::NetworkDisconnected:
+            return "Network";
+    }
+    return "Metric";
+}
+
+}  // namespace
 
 AlertEngine::AlertEngine(std::vector<AlertRule> rules) : rules_(std::move(rules)) {}
 
@@ -86,8 +133,15 @@ bool AlertEngine::is_breaching(const AlertRule& rule, const MetricDelta& delta, 
 
 std::string AlertEngine::build_message(const AlertRule& rule, AlertState state, double value) const {
     std::ostringstream output;
-    output << (state == AlertState::Triggered ? "[ALERT] " : "[RECOVERED] ");
-    output << rule.id << " (" << to_string(rule.metric) << ") value=" << std::fixed << std::setprecision(2) << value;
+    if (state == AlertState::Triggered) {
+        output << metric_label(rule.metric) << " alert triggered";
+    } else {
+        output << metric_label(rule.metric) << " recovered";
+    }
+    output << ": current " << format_value(rule.metric, value);
+    if (rule.metric != AlertMetric::NetworkDisconnected) {
+        output << ", threshold " << (rule.trigger_when_below ? "< " : "> ") << format_value(rule.metric, rule.threshold);
+    }
     return output.str();
 }
 

@@ -30,6 +30,7 @@
 - 使用简单 `key=value` 文本格式，避免在基础阶段引入额外依赖。
 - 默认配置首次启动时自动生成。
 - 平台路径通过 `default_config_path()` 统一处理。
+- 运行中的 `MonitorService` 支持热更新采样间隔与告警规则，供桌面设置页即时生效。
 
 ## Platform Abstraction
 
@@ -50,7 +51,7 @@
 - `/proc/meminfo` 读取内存使用
 - `/proc/net/dev` + `getifaddrs()` 读取网络流量与接口状态
 - Ayatana AppIndicator 托盘标签与菜单
-- GTK 监控窗口，包含总览、趋势图、接口列表和告警面板
+- GTK 监控窗口，包含总览、趋势图、接口列表、设置页和告警面板
 - `libnotify` 桌面通知
 
 后续引入 GTK/AppIndicator 时，只需替换 Linux shell 中的 UI 适配器，不需要改共享核心。

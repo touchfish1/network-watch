@@ -27,10 +27,11 @@ public:
 
     void set_metric_listener(MetricListener listener);
     void set_alert_listener(AlertListener listener);
+    void update_settings(const Settings& settings);
 
     std::optional<MetricDelta> latest_delta() const;
     HistorySnapshot history() const;
-    const Settings& settings() const { return settings_; }
+    Settings settings() const;
 
 private:
     void run();

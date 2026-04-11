@@ -100,9 +100,20 @@ Settings default_settings() {
         make_rule("cpu_high", AlertMetric::CpuUsage, 85.0, std::chrono::seconds(15), std::chrono::seconds(120)),
         make_rule("memory_high", AlertMetric::MemoryUsage, 90.0, std::chrono::seconds(20), std::chrono::seconds(180)),
         make_rule("download_spike", AlertMetric::DownloadRate, 50.0 * 1024.0 * 1024.0, std::chrono::seconds(10), std::chrono::seconds(120)),
+        make_rule("upload_spike", AlertMetric::UploadRate, 25.0 * 1024.0 * 1024.0, std::chrono::seconds(10), std::chrono::seconds(120)),
         make_rule("network_down", AlertMetric::NetworkDisconnected, 0.5, std::chrono::seconds(10), std::chrono::seconds(60), true),
     };
     return settings;
+}
+
+std::optional<AlertRule> default_alert_rule(const std::string& rule_id) {
+    const auto settings = default_settings();
+    for (const auto& rule : settings.alert_rules) {
+        if (rule.id == rule_id) {
+            return rule;
+        }
+    }
+    return std::nullopt;
 }
 
 Settings load_settings(const std::filesystem::path& path) {
@@ -121,6 +132,21 @@ Settings load_settings(const std::filesystem::path& path) {
     }
     if (const auto it = values.find("notifications_enabled"); it != values.end()) {
         settings.notifications_enabled = to_bool(it->second);
+    }
+    if (const auto it = values.find("notification_snooze_until_epoch_seconds"); it != values.end()) {
+        const auto raw = std::stoll(it->second);
+        if (raw > 0) {
+            settings.notification_snooze_until_epoch_seconds = raw;
+        }
+    }
+    if (const auto it = values.find("quiet_hours_enabled"); it != values.end()) {
+        settings.quiet_hours_enabled = to_bool(it->second);
+    }
+    if (const auto it = values.find("quiet_hours_start_minute"); it != values.end()) {
+        settings.quiet_hours_start_minute = std::stoi(it->second);
+    }
+    if (const auto it = values.find("quiet_hours_end_minute"); it != values.end()) {
+        settings.quiet_hours_end_minute = std::stoi(it->second);
     }
     if (const auto it = values.find("autostart_enabled"); it != values.end()) {
         settings.autostart_enabled = to_bool(it->second);
@@ -143,6 +169,12 @@ Settings load_settings(const std::filesystem::path& path) {
         if (const auto it = values.find(prefix + "cooldown_sec"); it != values.end()) {
             rule.cooldown_for = std::chrono::seconds(std::stoll(it->second));
         }
+        if (const auto it = values.find(prefix + "notification_snooze_until_epoch_seconds"); it != values.end()) {
+            const auto raw = std::stoll(it->second);
+            if (raw > 0) {
+                rule.notification_snooze_until_epoch_seconds = raw;
+            }
+        }
     }
 
     return settings;
@@ -155,6 +187,12 @@ void save_settings(const std::filesystem::path& path, const Settings& settings) 
     output << "sample_interval_ms=" << settings.sample_interval.count() << '\n';
     output << "tray_refresh_interval_ms=" << settings.tray_refresh_interval.count() << '\n';
     output << "notifications_enabled=" << (settings.notifications_enabled ? "true" : "false") << '\n';
+    output << "notification_snooze_until_epoch_seconds="
+           << (settings.notification_snooze_until_epoch_seconds.has_value() ? *settings.notification_snooze_until_epoch_seconds : 0)
+           << '\n';
+    output << "quiet_hours_enabled=" << (settings.quiet_hours_enabled ? "true" : "false") << '\n';
+    output << "quiet_hours_start_minute=" << settings.quiet_hours_start_minute << '\n';
+    output << "quiet_hours_end_minute=" << settings.quiet_hours_end_minute << '\n';
     output << "autostart_enabled=" << (settings.autostart_enabled ? "true" : "false") << '\n';
     output << "print_tray_updates=" << (settings.print_tray_updates ? "true" : "false") << '\n';
 
@@ -164,7 +202,72 @@ void save_settings(const std::filesystem::path& path, const Settings& settings) 
         output << prefix << "threshold=" << rule.threshold << '\n';
         output << prefix << "sustain_sec=" << rule.sustain_for.count() << '\n';
         output << prefix << "cooldown_sec=" << rule.cooldown_for.count() << '\n';
+        output << prefix << "notification_snooze_until_epoch_seconds="
+               << (rule.notification_snooze_until_epoch_seconds.has_value() ? *rule.notification_snooze_until_epoch_seconds : 0)
+               << '\n';
     }
+}
+
+bool quiet_hours_active(const Settings& settings, std::chrono::system_clock::time_point now) {
+    if (!settings.quiet_hours_enabled) {
+        return false;
+    }
+
+    const int start = settings.quiet_hours_start_minute;
+    const int end = settings.quiet_hours_end_minute;
+    if (start == end) {
+        return false;
+    }
+
+    const auto current_time = std::chrono::system_clock::to_time_t(now);
+    std::tm local_tm {};
+    localtime_r(&current_time, &local_tm);
+    const int current_minute = local_tm.tm_hour * 60 + local_tm.tm_min;
+
+    if (start < end) {
+        return current_minute >= start && current_minute < end;
+    }
+
+    return current_minute >= start || current_minute < end;
+}
+
+bool notifications_allowed(const Settings& settings, std::chrono::system_clock::time_point now) {
+    if (!settings.notifications_enabled) {
+        return false;
+    }
+
+    if (settings.notification_snooze_until_epoch_seconds.has_value()) {
+        const auto snooze_until = std::chrono::system_clock::time_point(
+            std::chrono::seconds(*settings.notification_snooze_until_epoch_seconds));
+        if (now < snooze_until) {
+            return false;
+        }
+    }
+
+    return !quiet_hours_active(settings, now);
+}
+
+bool alert_rule_notifications_allowed(
+    const Settings& settings,
+    const std::string& rule_id,
+    std::chrono::system_clock::time_point now) {
+    if (!notifications_allowed(settings, now)) {
+        return false;
+    }
+
+    for (const auto& rule : settings.alert_rules) {
+        if (rule.id != rule_id) {
+            continue;
+        }
+        if (!rule.notification_snooze_until_epoch_seconds.has_value()) {
+            return true;
+        }
+        const auto snooze_until = std::chrono::system_clock::time_point(
+            std::chrono::seconds(*rule.notification_snooze_until_epoch_seconds));
+        return now >= snooze_until;
+    }
+
+    return true;
 }
 
 std::string to_string(AlertMetric metric) {

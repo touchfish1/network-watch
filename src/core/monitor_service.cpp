@@ -37,6 +37,12 @@ void MonitorService::set_alert_listener(AlertListener listener) {
     alert_listener_ = std::move(listener);
 }
 
+void MonitorService::update_settings(const Settings& settings) {
+    std::scoped_lock lock(mutex_);
+    settings_ = settings;
+    alert_engine_ = AlertEngine(settings_.alert_rules);
+}
+
 std::optional<MetricDelta> MonitorService::latest_delta() const {
     std::scoped_lock lock(mutex_);
     return latest_delta_;
@@ -47,8 +53,14 @@ HistorySnapshot MonitorService::history() const {
     return history_;
 }
 
+Settings MonitorService::settings() const {
+    std::scoped_lock lock(mutex_);
+    return settings_;
+}
+
 void MonitorService::run() {
     while (running_) {
+        std::chrono::milliseconds sample_interval {1000};
         const auto captured = provider_->capture();
         if (captured.has_value()) {
             std::optional<MetricDelta> delta;
@@ -79,6 +91,8 @@ void MonitorService::run() {
                     alert_listener = alert_listener_;
                     history_copy = history_;
                 }
+
+                sample_interval = settings_.sample_interval;
             }
 
             if (delta.has_value() && metric_listener) {
@@ -89,9 +103,12 @@ void MonitorService::run() {
                     alert_listener(event);
                 }
             }
+        } else {
+            std::scoped_lock lock(mutex_);
+            sample_interval = settings_.sample_interval;
         }
 
-        std::this_thread::sleep_for(settings_.sample_interval);
+        std::this_thread::sleep_for(sample_interval);
     }
 }
 

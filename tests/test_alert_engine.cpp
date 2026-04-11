@@ -57,9 +57,28 @@ void test_alert_recovers() {
     network_watch::test::expect(events.front().state == network_watch::AlertState::Recovered, "alert state should be recovered");
 }
 
+void test_alert_message_is_human_readable() {
+    network_watch::AlertRule rule;
+    rule.id = "memory";
+    rule.metric = network_watch::AlertMetric::MemoryUsage;
+    rule.threshold = 90.0;
+    rule.sustain_for = 1s;
+    rule.cooldown_for = 30s;
+
+    network_watch::AlertEngine engine({rule});
+    const auto base = network_watch::Clock::now();
+
+    engine.evaluate(make_delta(base, 10.0, 95.0));
+    auto events = engine.evaluate(make_delta(base + 1s, 10.0, 95.0));
+    network_watch::test::expect(events.size() == 1, "memory alert should trigger");
+    network_watch::test::expect(events.front().message.find("Memory alert triggered") != std::string::npos, "message should use human-readable label");
+    network_watch::test::expect(events.front().message.find("95.0%") != std::string::npos, "message should include formatted value");
+}
+
 }  // namespace
 
 void run_alert_engine_tests() {
     test_alert_triggers_after_sustain();
     test_alert_recovers();
+    test_alert_message_is_human_readable();
 }
