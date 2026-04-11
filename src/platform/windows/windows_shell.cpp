@@ -40,6 +40,7 @@ constexpr UINT kMenuCheckUpdatesId = 1006;
 constexpr UINT kUpdateCheckCompletedMessage = WM_APP + 5;
 constexpr wchar_t kHostWindowClassName[] = L"NetworkWatchTrayWindow";
 constexpr wchar_t kMonitorWindowClassName[] = L"NetworkWatchMonitorWindow";
+constexpr wchar_t kStatusWindowClassName[] = L"NetworkWatchStatusWindow";
 constexpr wchar_t kReleaseApiHost[] = L"api.github.com";
 constexpr wchar_t kReleaseApiPath[] = L"/repos/touchfish1/network-watch/releases/latest";
 
@@ -127,6 +128,21 @@ std::wstring truncate_tip(const std::wstring& text) {
         return text;
     }
     return text.substr(0, kMaxTipLength - 3) + L"...";
+}
+
+std::string build_status_bar_text(const MetricDelta& latest, AppLanguage language) {
+    std::ostringstream output;
+    output
+        << "CPU " << format_percent(latest.cpu_usage_percent)
+        << "  " << localized_metric_short_label(AlertMetric::MemoryUsage, language) << ' '
+        << format_percent(latest.memory_usage_percent)
+        << "\n"
+        << localized_metric_short_label(AlertMetric::DownloadRate, language) << ' '
+        << format_rate(latest.download_bytes_per_second)
+        << "  "
+        << localized_metric_short_label(AlertMetric::UploadRate, language) << ' '
+        << format_rate(latest.upload_bytes_per_second);
+    return output.str();
 }
 
 std::string current_app_version() {
@@ -565,6 +581,10 @@ public:
         }
         Shell_NotifyIconW(NIM_SETVERSION, &tray_icon_);
 
+        create_status_window_if_needed();
+        ShowWindow(status_hwnd_, SW_SHOWNOACTIVATE);
+        UpdateWindow(status_hwnd_);
+
         initialized_ = true;
     }
 
@@ -609,6 +629,7 @@ public:
             DestroyMenu(menu_);
             menu_ = nullptr;
         }
+        destroy_status_window();
         destroy_monitor_window();
         if (host_hwnd_ != nullptr) {
             DestroyWindow(host_hwnd_);
@@ -670,6 +691,22 @@ private:
         return DefWindowProcW(hwnd, message, w_param, l_param);
     }
 
+    static LRESULT CALLBACK status_window_proc(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
+        if (message == WM_NCCREATE) {
+            const auto* create = reinterpret_cast<CREATESTRUCTW*>(l_param);
+            auto* self = static_cast<WindowsTrayAdapter*>(create->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            return TRUE;
+        }
+
+        auto* self = reinterpret_cast<WindowsTrayAdapter*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (self != nullptr) {
+            return self->handle_status_message(hwnd, message, w_param, l_param);
+        }
+
+        return DefWindowProcW(hwnd, message, w_param, l_param);
+    }
+
     void register_window_classes() {
         HINSTANCE instance = GetModuleHandleW(nullptr);
 
@@ -691,6 +728,15 @@ private:
         monitor_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
         monitor_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         RegisterClassExW(&monitor_class);
+
+        WNDCLASSEXW status_class {};
+        status_class.cbSize = sizeof(status_class);
+        status_class.lpfnWndProc = &WindowsTrayAdapter::status_window_proc;
+        status_class.hInstance = instance;
+        status_class.lpszClassName = kStatusWindowClassName;
+        status_class.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        status_class.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        RegisterClassExW(&status_class);
     }
 
     LRESULT handle_host_message(UINT message, WPARAM w_param, LPARAM l_param) {
@@ -713,6 +759,7 @@ private:
                 return 0;
             case kRefreshMonitorMessage:
                 refresh_monitor_window();
+                refresh_status_window();
                 return 0;
             case WM_COMMAND:
                 switch (LOWORD(w_param)) {
@@ -744,6 +791,10 @@ private:
                 host_hwnd_ = nullptr;
                 PostQuitMessage(0);
                 return 0;
+            case WM_DISPLAYCHANGE:
+            case WM_SETTINGCHANGE:
+                reposition_status_window();
+                return 0;
             default:
                 break;
         }
@@ -760,6 +811,25 @@ private:
                 break;
         }
 
+        return DefWindowProcW(hwnd, message, w_param, l_param);
+    }
+
+    LRESULT handle_status_message(HWND hwnd, UINT message, WPARAM w_param, LPARAM l_param) {
+        switch (message) {
+            case WM_LBUTTONUP:
+            case WM_LBUTTONDBLCLK:
+                show_monitor_window();
+                return 0;
+            case WM_DISPLAYCHANGE:
+            case WM_SETTINGCHANGE:
+                reposition_status_window();
+                return 0;
+            case WM_CLOSE:
+                ShowWindow(hwnd, SW_HIDE);
+                return 0;
+            default:
+                break;
+        }
         return DefWindowProcW(hwnd, message, w_param, l_param);
     }
 
@@ -807,6 +877,8 @@ private:
                 ModifyMenuW(menu_, kMenuNetworkId, MF_BYCOMMAND | MF_STRING | MF_GRAYED, kMenuNetworkId, utf8_to_wide(network_line).c_str());
             }
         }
+
+        refresh_status_window();
     }
 
     void show_context_menu() {
@@ -1017,6 +1089,116 @@ private:
         SendMessageW(interfaces_label_, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     }
 
+    void create_status_window_if_needed() {
+        if (status_hwnd_ != nullptr) {
+            return;
+        }
+
+        HINSTANCE instance = GetModuleHandleW(nullptr);
+        status_hwnd_ = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+            kStatusWindowClassName,
+            utf8_to_wide(localized_app_name(current_language())).c_str(),
+            WS_POPUP | WS_VISIBLE,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            280,
+            54,
+            nullptr,
+            nullptr,
+            instance,
+            this);
+
+        if (status_hwnd_ == nullptr) {
+            throw std::runtime_error("Failed to create Windows status bar window");
+        }
+
+        HFONT font = static_cast<HFONT>(GetStockObject(DEFAULT_GUI_FONT));
+        status_label_ = CreateWindowExW(
+            0,
+            L"STATIC",
+            utf8_to_wide(current_language() == AppLanguage::SimplifiedChinese ? "等待指标..." : "Waiting for metrics...").c_str(),
+            WS_CHILD | WS_VISIBLE | SS_CENTER,
+            10,
+            6,
+            260,
+            42,
+            status_hwnd_,
+            nullptr,
+            instance,
+            nullptr);
+        SendMessageW(status_label_, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+        reposition_status_window();
+    }
+
+    void reposition_status_window() {
+        if (status_hwnd_ == nullptr) {
+            return;
+        }
+
+        RECT work_area {};
+        SystemParametersInfoW(SPI_GETWORKAREA, 0, &work_area, 0);
+
+        APPBARDATA appbar {};
+        appbar.cbSize = sizeof(appbar);
+        RECT taskbar_rect = work_area;
+        UINT edge = ABE_BOTTOM;
+        if (SHAppBarMessage(ABM_GETTASKBARPOS, &appbar)) {
+            taskbar_rect = appbar.rc;
+            edge = appbar.uEdge;
+        }
+
+        constexpr int width = 280;
+        constexpr int height = 54;
+        constexpr int margin = 8;
+        int x = work_area.right - width - margin;
+        int y = work_area.bottom - height - margin;
+
+        switch (edge) {
+            case ABE_TOP:
+                y = taskbar_rect.bottom + margin;
+                break;
+            case ABE_LEFT:
+                x = taskbar_rect.right + margin;
+                y = work_area.bottom - height - margin;
+                break;
+            case ABE_RIGHT:
+                x = taskbar_rect.left - width - margin;
+                y = work_area.bottom - height - margin;
+                break;
+            case ABE_BOTTOM:
+            default:
+                y = taskbar_rect.top - height - margin;
+                break;
+        }
+
+        SetWindowPos(status_hwnd_, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+
+    void refresh_status_window() {
+        if (status_hwnd_ == nullptr || status_label_ == nullptr) {
+            return;
+        }
+
+        std::optional<MetricDelta> latest;
+        {
+            std::scoped_lock lock(mutex_);
+            latest = latest_;
+        }
+
+        if (!latest.has_value()) {
+            set_control_text(
+                status_label_,
+                current_language() == AppLanguage::SimplifiedChinese
+                    ? "等待第一批指标\nCPU --  内存 --"
+                    : "Waiting for metrics\nCPU --  Memory --");
+            return;
+        }
+
+        set_control_text(status_label_, build_status_bar_text(*latest, current_language()));
+        reposition_status_window();
+    }
+
     HWND create_label(const wchar_t* text, int x, int y, int width, int height, bool bold, HFONT fallback_font) {
         HINSTANCE instance = GetModuleHandleW(nullptr);
         HWND control = CreateWindowExW(
@@ -1119,6 +1301,14 @@ private:
         interfaces_label_ = nullptr;
     }
 
+    void destroy_status_window() {
+        if (status_hwnd_ != nullptr) {
+            DestroyWindow(status_hwnd_);
+            status_hwnd_ = nullptr;
+        }
+        status_label_ = nullptr;
+    }
+
     std::mutex mutex_;
     Settings settings_;
     TraySummary summary_ {};
@@ -1129,6 +1319,7 @@ private:
 
     HWND host_hwnd_ = nullptr;
     HWND monitor_hwnd_ = nullptr;
+    HWND status_hwnd_ = nullptr;
     HMENU menu_ = nullptr;
     NOTIFYICONDATAW tray_icon_ {};
     HFONT header_font_ = nullptr;
@@ -1141,6 +1332,7 @@ private:
     HWND upload_label_ = nullptr;
     HWND network_label_ = nullptr;
     HWND interfaces_label_ = nullptr;
+    HWND status_label_ = nullptr;
 
     bool initialized_ = false;
 };
