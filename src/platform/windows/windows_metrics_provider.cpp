@@ -1,5 +1,13 @@
 #include "network_watch/interfaces.hpp"
 
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0600
+#endif
+
+#ifndef NTDDI_VERSION
+#define NTDDI_VERSION 0x06000000
+#endif
+
 #include <winsock2.h>
 #include <windows.h>
 #include <iphlpapi.h>
