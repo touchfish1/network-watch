@@ -1,7 +1,11 @@
 #include "network_watch/updater.hpp"
 
+#include <cctype>
+#include <limits>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace network_watch {
 
@@ -43,6 +47,37 @@ std::string json_unescape(const std::string& value) {
     return result;
 }
 
+std::string ascii_lower(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string_view filename_from_url(std::string_view url) {
+    const auto query_pos = url.find_first_of("?#");
+    if (query_pos != std::string_view::npos) {
+        url = url.substr(0, query_pos);
+    }
+
+    const auto slash_pos = url.find_last_of('/');
+    return slash_pos == std::string_view::npos ? url : url.substr(slash_pos + 1);
+}
+
+bool has_suffix(std::string_view value, std::string_view suffix) {
+    return value.size() >= suffix.size() &&
+        value.substr(value.size() - suffix.size()) == suffix;
+}
+
+bool contains_any(std::string_view value, const std::vector<std::string_view>& tokens) {
+    for (const auto token : tokens) {
+        if (value.find(token) != std::string_view::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool extract_json_string(const std::string& json, const std::string& key, std::size_t start, std::string& value, std::size_t* next_pos = nullptr) {
     const auto key_pattern = std::string("\"") + key + "\"";
     const auto key_pos = json.find(key_pattern, start);
@@ -74,15 +109,38 @@ bool extract_json_string(const std::string& json, const std::string& key, std::s
     return false;
 }
 
+int parse_version_component(const std::string& token) {
+    long long value = 0;
+    bool has_digits = false;
+
+    for (char ch : token) {
+        if (!std::isdigit(static_cast<unsigned char>(ch))) {
+            break;
+        }
+        has_digits = true;
+        value = value * 10 + (ch - '0');
+        if (value > std::numeric_limits<int>::max()) {
+            return std::numeric_limits<int>::max();
+        }
+    }
+
+    return has_digits ? static_cast<int>(value) : 0;
+}
+
 bool matches_platform_asset(const std::string& url, ReleaseAssetPlatform platform) {
+    const auto lowercase_url = ascii_lower(url);
+    const auto filename = filename_from_url(lowercase_url);
+
     switch (platform) {
         case ReleaseAssetPlatform::WindowsInstaller:
-            return url.ends_with(".exe") &&
-                (url.find("Windows") != std::string::npos || url.find("windows") != std::string::npos);
+            return (has_suffix(filename, ".exe") || has_suffix(filename, ".msi")) &&
+                contains_any(filename, {"windows", "win32", "win64", "x64", "amd64"});
         case ReleaseAssetPlatform::MacInstaller:
-            return url.ends_with(".dmg");
+            return (has_suffix(filename, ".dmg") || has_suffix(filename, ".pkg")) &&
+                !contains_any(filename, {"windows", "linux"});
         case ReleaseAssetPlatform::LinuxInstaller:
-            return url.ends_with(".deb");
+            return (has_suffix(filename, ".deb") || has_suffix(filename, ".appimage") || has_suffix(filename, ".rpm")) &&
+                !contains_any(filename, {"windows", "macos", "darwin", "osx"});
     }
     return false;
 }
@@ -109,8 +167,8 @@ int compare_versions(const std::string& lhs, const std::string& rhs) {
             break;
         }
 
-        const int lhs_value = lhs_token.empty() ? 0 : std::stoi(lhs_token);
-        const int rhs_value = rhs_token.empty() ? 0 : std::stoi(rhs_token);
+        const int lhs_value = parse_version_component(lhs_token);
+        const int rhs_value = parse_version_component(rhs_token);
         if (lhs_value != rhs_value) {
             return lhs_value < rhs_value ? -1 : 1;
         }
@@ -134,10 +192,7 @@ bool parse_latest_release_asset(
     std::size_t search_pos = 0;
     while (extract_json_string(release_json, "browser_download_url", search_pos, asset.download_url, &search_pos)) {
         if (matches_platform_asset(asset.download_url, platform)) {
-            const auto filename_pos = asset.download_url.find_last_of('/');
-            asset.asset_name = filename_pos == std::string::npos
-                ? asset.download_url
-                : asset.download_url.substr(filename_pos + 1);
+            asset.asset_name = std::string(filename_from_url(asset.download_url));
             return true;
         }
         asset.download_url.clear();

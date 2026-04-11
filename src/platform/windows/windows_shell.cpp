@@ -145,103 +145,6 @@ std::string build_status_bar_text(const MetricDelta& latest, AppLanguage languag
     return output.str();
 }
 
-std::string current_app_version() {
-#ifdef NETWORK_WATCH_VERSION
-    return NETWORK_WATCH_VERSION;
-#else
-    return "0.0.0";
-#endif
-}
-
-std::string trim_version_prefix(std::string value) {
-    if (!value.empty() && (value.front() == 'v' || value.front() == 'V')) {
-        value.erase(value.begin());
-    }
-    return value;
-}
-
-int compare_versions(const std::string& lhs, const std::string& rhs) {
-    std::istringstream lhs_stream(trim_version_prefix(lhs));
-    std::istringstream rhs_stream(trim_version_prefix(rhs));
-    for (;;) {
-        std::string lhs_token;
-        std::string rhs_token;
-        const bool has_lhs = static_cast<bool>(std::getline(lhs_stream, lhs_token, '.'));
-        const bool has_rhs = static_cast<bool>(std::getline(rhs_stream, rhs_token, '.'));
-        if (!has_lhs && !has_rhs) {
-            break;
-        }
-
-        const int lhs_value = lhs_token.empty() ? 0 : std::stoi(lhs_token);
-        const int rhs_value = rhs_token.empty() ? 0 : std::stoi(rhs_token);
-        if (lhs_value != rhs_value) {
-            return lhs_value < rhs_value ? -1 : 1;
-        }
-    }
-
-    return 0;
-}
-
-std::string json_unescape(const std::string& value) {
-    std::string result;
-    result.reserve(value.size());
-
-    bool escaping = false;
-    for (char ch : value) {
-        if (escaping) {
-            switch (ch) {
-                case '\\': result.push_back('\\'); break;
-                case '"': result.push_back('"'); break;
-                case '/': result.push_back('/'); break;
-                case 'n': result.push_back('\n'); break;
-                case 'r': result.push_back('\r'); break;
-                case 't': result.push_back('\t'); break;
-                default: result.push_back(ch); break;
-            }
-            escaping = false;
-            continue;
-        }
-        if (ch == '\\') {
-            escaping = true;
-            continue;
-        }
-        result.push_back(ch);
-    }
-
-    return result;
-}
-
-bool extract_json_string(const std::string& json, const std::string& key, std::size_t start, std::string& value, std::size_t* next_pos = nullptr) {
-    const auto key_pattern = std::string("\"") + key + "\"";
-    const auto key_pos = json.find(key_pattern, start);
-    if (key_pos == std::string::npos) {
-        return false;
-    }
-
-    const auto colon_pos = json.find(':', key_pos + key.size() + 2);
-    const auto open_quote = json.find('\"', colon_pos + 1);
-    if (colon_pos == std::string::npos || open_quote == std::string::npos) {
-        return false;
-    }
-
-    std::string raw_value;
-    bool escaping = false;
-    for (std::size_t index = open_quote + 1; index < json.size(); ++index) {
-        const char ch = json[index];
-        if (!escaping && ch == '\"') {
-            value = json_unescape(raw_value);
-            if (next_pos != nullptr) {
-                *next_pos = index + 1;
-            }
-            return true;
-        }
-        raw_value.push_back(ch);
-        escaping = (!escaping && ch == '\\');
-    }
-
-    return false;
-}
-
 bool http_get_text(const std::wstring& host, const std::wstring& path, std::string& body, std::string& error_message) {
     auto session = WinHttpOpen(L"NetworkWatchUpdater/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == nullptr) {
@@ -433,7 +336,7 @@ struct UpdateCheckResult {
     };
 
     Status status = Status::Failed;
-    std::string latest_version;
+    ReleaseAssetInfo asset;
     std::wstring installer_path;
     std::string message;
 };
@@ -447,44 +350,25 @@ UpdateCheckResult check_for_installer_update() {
         return result;
     }
 
-    if (!extract_json_string(body, "tag_name", 0, result.latest_version, nullptr)) {
-        result.message = "Failed to parse latest release tag";
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::WindowsInstaller, result.asset, error_message)) {
+        result.message = std::move(error_message);
         return result;
     }
 
-    if (compare_versions(current_app_version(), result.latest_version) >= 0) {
+    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
         result.status = UpdateCheckResult::Status::UpToDate;
         result.message = "Already on the latest version";
         return result;
     }
 
-    std::size_t search_pos = 0;
-    std::string download_url;
-    while (extract_json_string(body, "browser_download_url", search_pos, download_url, &search_pos)) {
-        const bool is_windows_installer =
-            download_url.ends_with(".exe") &&
-            (download_url.find("Windows") != std::string::npos || download_url.find("windows") != std::string::npos);
-        if (is_windows_installer) {
-            break;
-        }
-        download_url.clear();
-    }
-
-    if (download_url.empty()) {
-        result.message = "Latest release does not contain a Windows installer asset";
-        return result;
-    }
-
-    const auto filename_pos = download_url.find_last_of('/');
-    const auto filename = filename_pos == std::string::npos ? "network-watch-update.exe" : download_url.substr(filename_pos + 1);
     wchar_t temp_path_buffer[MAX_PATH] = {};
     if (GetTempPathW(MAX_PATH, temp_path_buffer) == 0) {
         result.message = "Failed to locate Windows temp directory";
         return result;
     }
 
-    result.installer_path = std::filesystem::path(temp_path_buffer) / utf8_to_wide(filename);
-    if (!download_file_https(download_url, result.installer_path, error_message)) {
+    result.installer_path = std::filesystem::path(temp_path_buffer) / utf8_to_wide(result.asset.asset_name);
+    if (!download_file_https(result.asset.download_url, result.installer_path, error_message)) {
         result.message = std::move(error_message);
         result.installer_path.clear();
         return result;
@@ -966,7 +850,7 @@ private:
             (current_language() == AppLanguage::SimplifiedChinese
                  ? "已下载新版本 "
                  : "A new version has been downloaded: ") +
-            result.latest_version +
+            result.asset.latest_version +
             (current_language() == AppLanguage::SimplifiedChinese
                  ? "\n现在启动安装程序并退出当前应用吗？"
                  : "\nLaunch the installer now and close the current app?");

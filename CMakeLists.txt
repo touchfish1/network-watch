@@ -109,6 +109,7 @@ if(NETWORK_WATCH_BUILD_TESTS)
         tests/test_alert_engine.cpp
         tests/test_metrics_math.cpp
         tests/test_settings.cpp
+        tests/test_updater.cpp
     )
 
     target_include_directories(network_watch_tests PRIVATE include tests)

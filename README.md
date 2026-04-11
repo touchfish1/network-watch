@@ -115,9 +115,10 @@ Linux 打包任务会自动安装：
 
 ### Release Artifacts
 
-当前打包产物为跨平台归档文件：
+当前 GitHub Actions 会生成与平台对应的原生安装分发产物：
 
-- Linux / macOS: `.tar.gz`
-- Windows: `.zip`
+- Linux: `.deb`
+- macOS: `.dmg`
+- Windows: NSIS 安装程序 `.exe`
 
-后续如果项目演进为完整原生桌面应用，可以在现有 workflow 上继续切换为 `.app`、安装包或 AppImage / MSI 等分发格式。
+如果后续需要扩展分发渠道，也可以在现有 workflow 上继续增加 AppImage、`.pkg`、MSI 等额外产物。
