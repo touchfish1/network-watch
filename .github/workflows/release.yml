@@ -91,11 +91,19 @@ jobs:
         run: |
           cpack --config build/CPackConfig.cmake -B dist -C Release --verbose
 
+      - name: Collect packaged artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-files
+          find dist -maxdepth 1 -type f -exec cp {} release-files/ \;
+          ls -la release-files
+
       - name: Upload packaged artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.label }}
-          path: dist/*
+          path: release-files/*
           if-no-files-found: error
 
   publish:
@@ -116,6 +124,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          mapfile -t assets < <(find release-assets -maxdepth 1 -type f | sort)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "No release asset files found in release-assets/"
+            exit 1
+          fi
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             echo "Release ${RELEASE_TAG} already exists, uploading fresh assets."
           else
@@ -123,4 +136,4 @@ jobs:
               --title "${RELEASE_TAG}" \
               --generate-notes
           fi
-          gh release upload "${RELEASE_TAG}" release-assets/* --clobber
+          gh release upload "${RELEASE_TAG}" "${assets[@]}" --clobber
