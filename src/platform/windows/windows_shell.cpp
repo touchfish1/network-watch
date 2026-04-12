@@ -1,4 +1,5 @@
 #include "network_watch/application.hpp"
+#include "network_watch/updater.hpp"
 
 #include <windows.h>
 #include <shellapi.h>
