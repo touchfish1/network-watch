@@ -79,7 +79,7 @@ struct UpdateCheckResult {
     };
 
     Status status = Status::Failed;
-    ReleaseAssetInfo asset;
+    ReleaseAssetInfo release_asset;
     std::filesystem::path installer_path;
     std::string message;
 };
@@ -93,19 +93,19 @@ UpdateCheckResult check_for_linux_installer_update() {
     }
 
     std::string error_message;
-    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::LinuxInstaller, result.asset, error_message)) {
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::LinuxInstaller, result.release_asset, error_message)) {
         result.message = std::move(error_message);
         return result;
     }
 
-    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
+    if (compare_versions(current_app_version(), result.release_asset.latest_version) >= 0) {
         result.status = UpdateCheckResult::Status::UpToDate;
         result.message = "Already on the latest version";
         return result;
     }
 
-    result.installer_path = std::filesystem::temp_directory_path() / result.asset.asset_name;
-    if (!download_file_with_curl(result.asset.download_url, result.installer_path)) {
+    result.installer_path = std::filesystem::temp_directory_path() / result.release_asset.asset_name;
+    if (!download_file_with_curl(result.release_asset.download_url, result.installer_path)) {
         result.message = "Failed to download the Linux installer package";
         return result;
     }
@@ -718,8 +718,8 @@ private:
             GTK_BUTTONS_YES_NO,
             "%s",
             (current_language() == AppLanguage::SimplifiedChinese
-                ? ("已下载新版本 " + result.asset.latest_version + "，现在启动安装程序吗？")
-                : ("A new version has been downloaded: " + result.asset.latest_version + ". Launch the installer now?")).c_str());
+                ? ("已下载新版本 " + result.release_asset.latest_version + "，现在启动安装程序吗？")
+                : ("A new version has been downloaded: " + result.release_asset.latest_version + ". Launch the installer now?")).c_str());
         const int response = gtk_dialog_run(GTK_DIALOG(dialog));
         gtk_widget_destroy(dialog);
         if (response != GTK_RESPONSE_YES) {

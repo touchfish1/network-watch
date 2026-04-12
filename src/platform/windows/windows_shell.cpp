@@ -336,7 +336,7 @@ struct UpdateCheckResult {
     };
 
     Status status = Status::Failed;
-    ReleaseAssetInfo asset;
+    ReleaseAssetInfo release_asset;
     std::wstring installer_path;
     std::string message;
 };
@@ -350,12 +350,12 @@ UpdateCheckResult check_for_installer_update() {
         return result;
     }
 
-    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::WindowsInstaller, result.asset, error_message)) {
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::WindowsInstaller, result.release_asset, error_message)) {
         result.message = std::move(error_message);
         return result;
     }
 
-    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
+    if (compare_versions(current_app_version(), result.release_asset.latest_version) >= 0) {
         result.status = UpdateCheckResult::Status::UpToDate;
         result.message = "Already on the latest version";
         return result;
@@ -367,8 +367,8 @@ UpdateCheckResult check_for_installer_update() {
         return result;
     }
 
-    result.installer_path = std::filesystem::path(temp_path_buffer) / utf8_to_wide(result.asset.asset_name);
-    if (!download_file_https(result.asset.download_url, result.installer_path, error_message)) {
+    result.installer_path = std::filesystem::path(temp_path_buffer) / utf8_to_wide(result.release_asset.asset_name);
+    if (!download_file_https(result.release_asset.download_url, result.installer_path, error_message)) {
         result.message = std::move(error_message);
         result.installer_path.clear();
         return result;
@@ -850,7 +850,7 @@ private:
             (current_language() == AppLanguage::SimplifiedChinese
                  ? "已下载新版本 "
                  : "A new version has been downloaded: ") +
-            result.asset.latest_version +
+            result.release_asset.latest_version +
             (current_language() == AppLanguage::SimplifiedChinese
                  ? "\n现在启动安装程序并退出当前应用吗？"
                  : "\nLaunch the installer now and close the current app?");

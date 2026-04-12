@@ -137,7 +137,7 @@ struct UpdateCheckResult {
     };
 
     Status status = Status::Failed;
-    ReleaseAssetInfo asset;
+    ReleaseAssetInfo release_asset;
     std::filesystem::path installer_path;
     std::string message;
 };
@@ -151,19 +151,19 @@ UpdateCheckResult check_for_macos_installer_update() {
     }
 
     std::string error_message;
-    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::MacInstaller, result.asset, error_message)) {
+    if (!parse_latest_release_asset(body, ReleaseAssetPlatform::MacInstaller, result.release_asset, error_message)) {
         result.message = std::move(error_message);
         return result;
     }
 
-    if (compare_versions(current_app_version(), result.asset.latest_version) >= 0) {
+    if (compare_versions(current_app_version(), result.release_asset.latest_version) >= 0) {
         result.status = UpdateCheckResult::Status::UpToDate;
         result.message = "Already on the latest version";
         return result;
     }
 
-    result.installer_path = std::filesystem::temp_directory_path() / result.asset.asset_name;
-    if (!download_file_with_curl(result.asset.download_url, result.installer_path)) {
+    result.installer_path = std::filesystem::temp_directory_path() / result.release_asset.asset_name;
+    if (!download_file_with_curl(result.release_asset.download_url, result.installer_path)) {
         result.message = "Failed to download the macOS installer image";
         return result;
     }
@@ -442,7 +442,7 @@ private:
             (current_language() == AppLanguage::SimplifiedChinese
                 ? "已下载新版本 "
                 : "A new version has been downloaded: ") +
-            result.asset.latest_version +
+            result.release_asset.latest_version +
             (current_language() == AppLanguage::SimplifiedChinese
                 ? "\n现在打开安装镜像并退出当前应用吗？"
                 : "\nOpen the installer image now and quit the current app?"))];
