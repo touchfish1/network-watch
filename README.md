@@ -94,7 +94,21 @@ docs/                      Architecture and planning docs
 自动触发：
 
 ```bash
-git tag v0.1.0
+./scripts/release.sh
+```
+
+脚本会自动完成：
+
+- 拉取远端标签
+- 按最新 `vX.Y.Z` 标签把补丁版本 `+1`
+- 提交当前工作区改动（如果有）
+- 推送当前分支
+- 创建并推送新的 release tag
+
+如果你只想手工打标签，也可以继续使用：
+
+```bash
+git tag -a v0.1.0 -m "release: v0.1.0"
 git push origin v0.1.0
 ```
 

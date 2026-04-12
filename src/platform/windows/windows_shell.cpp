@@ -833,7 +833,7 @@ private:
         }
 
         if (result.status == UpdateCheckResult::Status::Failed) {
-            const auto message =
+            const std::string message =
                 (current_language() == AppLanguage::SimplifiedChinese
                      ? "检查更新失败："
                      : "Failed to check for updates: ") +
@@ -846,7 +846,7 @@ private:
             return;
         }
 
-        const auto prompt =
+        const std::string prompt =
             (current_language() == AppLanguage::SimplifiedChinese
                  ? "已下载新版本 "
                  : "A new version has been downloaded: ") +
