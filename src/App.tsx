@@ -29,17 +29,6 @@ type MetricHistory = {
   upload: number[];
 };
 
-type LayoutDebugInfo = {
-  phase: string;
-  beforePosition: string;
-  beforeSize: string;
-  targetPosition: string;
-  targetSize: string;
-  workArea: string;
-  monitor: string;
-  direction: string;
-};
-
 type ExpansionDirection = "down" | "up";
 type TaskbarEdge = "top" | "right" | "bottom" | "left";
 type ThemeId = "cyberpunk" | "japanese" | "chinese" | "western";
@@ -116,17 +105,6 @@ const emptyHistory: MetricHistory = {
   memory: [],
   download: [],
   upload: [],
-};
-
-const emptyDebugInfo: LayoutDebugInfo = {
-  phase: "idle",
-  beforePosition: "-",
-  beforeSize: "-",
-  targetPosition: "-",
-  targetSize: "-",
-  workArea: "-",
-  monitor: "-",
-  direction: "-",
 };
 
 const idleUpdateState: UpdateState = {
@@ -225,10 +203,14 @@ function getDockedPosition(
     return null;
   }
 
-  const minX = monitor.position.x;
-  const maxX = monitor.position.x + monitor.size.width - size.width;
-  const minY = monitor.position.y;
-  const maxY = monitor.position.y + monitor.size.height - size.height;
+  const workAreaX = monitor.workArea.position.x;
+  const workAreaY = monitor.workArea.position.y;
+  const workAreaWidth = monitor.workArea.size.width;
+  const workAreaHeight = monitor.workArea.size.height;
+  const minX = workAreaX;
+  const maxX = workAreaX + workAreaWidth - size.width;
+  const minY = workAreaY;
+  const maxY = workAreaY + workAreaHeight - size.height;
 
   const taskbarEdge = getTaskbarEdge(monitor);
   const clampedX = clamp(position.x, minX, Math.max(minX, maxX));
@@ -279,14 +261,18 @@ function getAnchoredExpandedPosition(
     return { position, direction: "unknown" };
   }
 
-  const minX = monitor.position.x;
-  const maxX = monitor.position.x + monitor.size.width - nextSize.width;
-  const minY = monitor.position.y;
-  const maxY = monitor.position.y + monitor.size.height - nextSize.height;
+  const workAreaX = monitor.workArea.position.x;
+  const workAreaY = monitor.workArea.position.y;
+  const workAreaWidth = monitor.workArea.size.width;
+  const workAreaHeight = monitor.workArea.size.height;
+  const minX = workAreaX;
+  const maxX = workAreaX + workAreaWidth - nextSize.width;
+  const minY = workAreaY;
+  const maxY = workAreaY + workAreaHeight - nextSize.height;
   const bottomEdge = position.y + currentSize.height;
   const downwardY = position.y;
   const upwardY = bottomEdge - nextSize.height;
-  const canExpandDown = position.y + nextSize.height <= monitor.position.y + monitor.size.height;
+  const canExpandDown = position.y + nextSize.height <= workAreaY + workAreaHeight;
   const nextY = canExpandDown ? downwardY : upwardY;
 
   return {
@@ -369,7 +355,6 @@ function App() {
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
   const [history, setHistory] = useState<MetricHistory>(emptyHistory);
   const [lastUpdated, setLastUpdated] = useState("等待系统数据…");
-  const [layoutDebugInfo, setLayoutDebugInfo] = useState<LayoutDebugInfo>(emptyDebugInfo);
   const [theme, setTheme] = useState<ThemeId>(() => {
     const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
     return saved && saved in themeDefinitions ? (saved as ThemeId) : "cyberpunk";
@@ -671,21 +656,6 @@ function App() {
       setExpansionDirection(expansionPlan.direction as ExpansionDirection);
     }
 
-    setLayoutDebugInfo({
-      phase: nextExpanded ? "expand" : "collapse",
-      beforePosition: `${position.x}, ${position.y}`,
-      beforeSize: `${size.width} x ${size.height}`,
-      targetPosition: `${expansionPlan.position.x}, ${expansionPlan.position.y}`,
-      targetSize: `${nextWidth} x ${nextHeight}`,
-      workArea: monitor
-        ? `${monitor.workArea.position.x}, ${monitor.workArea.position.y} / ${monitor.workArea.size.width} x ${monitor.workArea.size.height}`
-        : "none",
-      monitor: monitor
-        ? `${monitor.position.x}, ${monitor.position.y} / ${monitor.size.width} x ${monitor.size.height}`
-        : "none",
-      direction: expansionPlan.direction,
-    });
-
     await applyWindowLayoutSafely({
       width: nextWidth,
       height: nextHeight,
@@ -844,6 +814,34 @@ function App() {
               ) : null}
             </article>
 
+            <article className="overview-card">
+              <div className="overview-header">
+                <span className="settings-label">系统总览</span>
+                <span className="theme-current">{lastUpdated}</span>
+              </div>
+              <div className="overview-grid">
+                <div className="overview-item">
+                  <span className="stat-label">CPU</span>
+                  <strong>{formatPercent(snapshot.cpu_usage)}</strong>
+                  <span className="stat-subtitle">整机占用</span>
+                </div>
+                <div className="overview-item">
+                  <span className="stat-label">Memory</span>
+                  <strong>{formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</strong>
+                  <span className="stat-subtitle">
+                    {formatBytes(snapshot.memory_used)} / {formatBytes(snapshot.memory_total)}
+                  </span>
+                </div>
+                <div className="overview-item">
+                  <span className="stat-label">Network</span>
+                  <strong>
+                    ↓ {formatCompactRate(snapshot.network_download)} / ↑ {formatCompactRate(snapshot.network_upload)}
+                  </strong>
+                  <span className="stat-subtitle">实时上下行</span>
+                </div>
+              </div>
+            </article>
+
             <article className="settings-card">
               <div className="settings-card-header">
                 <div>
@@ -873,42 +871,6 @@ function App() {
               </div>
             </article>
           </section>
-
-          <div className="layout-debug">
-            <span>phase {layoutDebugInfo.phase}</span>
-            <span>before pos {layoutDebugInfo.beforePosition}</span>
-            <span>before size {layoutDebugInfo.beforeSize}</span>
-            <span>target pos {layoutDebugInfo.targetPosition}</span>
-            <span>target size {layoutDebugInfo.targetSize}</span>
-            <span>direction {layoutDebugInfo.direction}</span>
-            <span>workArea {layoutDebugInfo.workArea}</span>
-            <span>monitor {layoutDebugInfo.monitor}</span>
-          </div>
-
-          <div className="stats-grid">
-            <article className="stat-card">
-              <span className="stat-label">CPU</span>
-              <strong>{formatPercent(snapshot.cpu_usage)}</strong>
-              <span className="stat-subtitle">整机占用</span>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Memory</span>
-              <strong>{formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</strong>
-              <span className="stat-subtitle">
-                {formatBytes(snapshot.memory_used)} / {formatBytes(snapshot.memory_total)}
-              </span>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Download</span>
-              <strong>{formatRate(snapshot.network_download)}</strong>
-              <span className="stat-subtitle">实时下行</span>
-            </article>
-            <article className="stat-card">
-              <span className="stat-label">Upload</span>
-              <strong>{formatRate(snapshot.network_upload)}</strong>
-              <span className="stat-subtitle">实时上行</span>
-            </article>
-          </div>
 
           <div className={`details ${expanded ? "details-visible" : ""}`}>
             <div className="detail-card">
