@@ -44,7 +44,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: lts/*
+          node-version: 22
           cache: npm
 
       - name: Install Rust stable
@@ -70,7 +70,7 @@ jobs:
             libsoup-3.0-dev
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm install --no-audit --no-fund
 
       - name: Build and upload release
         uses: tauri-apps/tauri-action@action-v0.6.2
