@@ -9,6 +9,10 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_positioner::{Position, WindowExt as _};
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags, DEFAULT_FILENAME};
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+};
 
 const WINDOW_LABEL: &str = "main";
 const EVENT_SYSTEM_SNAPSHOT: &str = "system-snapshot";
@@ -16,12 +20,31 @@ const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 const MENU_AUTOSTART: &str = "toggle-autostart";
 const MENU_QUIT: &str = "quit";
 
+#[cfg(target_os = "windows")]
+fn force_windows_topmost<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    if let Ok(hwnd) = window.hwnd() {
+        let _ = unsafe {
+            SetWindowPos(
+                hwnd.0 as _,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_ASYNCWINDOWPOS | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            )
+        };
+    }
+}
+
 fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, interactive: bool) {
     let _ = window.set_always_on_top(true);
     let _ = window.set_skip_taskbar(true);
     let _ = window.set_focusable(interactive);
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     let _ = window.set_visible_on_all_workspaces(true);
+    #[cfg(target_os = "windows")]
+    force_windows_topmost(window);
 }
 
 #[tauri::command]
