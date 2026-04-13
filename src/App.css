@@ -154,7 +154,7 @@ select {
   justify-content: flex-start;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 0;
   background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
   box-shadow:
     0 20px 42px var(--shadow),
@@ -167,7 +167,7 @@ select {
   height: 100vh;
   overflow: hidden;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 0;
   background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
   box-shadow:
     0 20px 42px var(--shadow),
@@ -221,7 +221,7 @@ select {
   padding: 4px 8px 4px 9px;
   color: inherit;
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 0;
   background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
   box-shadow:
     0 12px 28px var(--shadow),
