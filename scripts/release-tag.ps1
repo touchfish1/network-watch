@@ -45,7 +45,7 @@ Update-VersionText $tauriConfigPath $currentVersion $nextVersion
 cargo check --manifest-path src-tauri/Cargo.toml | Out-Null
 npm run build | Out-Null
 
-git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+git add -A
 
 if ([string]::IsNullOrWhiteSpace($CommitMessage)) {
   $CommitMessage = "Release $tagName"

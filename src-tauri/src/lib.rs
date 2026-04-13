@@ -19,6 +19,8 @@ const EVENT_SYSTEM_SNAPSHOT: &str = "system-snapshot";
 const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 const MENU_AUTOSTART: &str = "toggle-autostart";
 const MENU_QUIT: &str = "quit";
+#[cfg(target_os = "windows")]
+const WINDOW_TOPMOST_GUARD_INTERVAL_MS: u64 = 1200;
 
 #[cfg(target_os = "windows")]
 fn force_windows_topmost<R: Runtime>(window: &tauri::WebviewWindow<R>) {
@@ -45,6 +47,20 @@ fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, interactive:
     let _ = window.set_visible_on_all_workspaces(true);
     #[cfg(target_os = "windows")]
     force_windows_topmost(window);
+}
+
+#[cfg(target_os = "windows")]
+fn start_windows_topmost_guard(app: AppHandle) {
+    thread::spawn(move || loop {
+        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+            if window.is_visible().unwrap_or(false) {
+                let interactive = window.is_focused().unwrap_or(false);
+                apply_overlay_mode(&window, interactive);
+            }
+        }
+
+        thread::sleep(Duration::from_millis(WINDOW_TOPMOST_GUARD_INTERVAL_MS));
+    });
 }
 
 #[tauri::command]
@@ -85,6 +101,8 @@ pub fn run() {
             build_tray(app)?;
             initialize_window(app.app_handle());
             start_sampler(app.app_handle().clone());
+            #[cfg(target_os = "windows")]
+            start_windows_topmost_guard(app.app_handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
