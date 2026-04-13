@@ -567,6 +567,11 @@ function App() {
 
     let unlistenSnapshot: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
+    const handleWindowBlur = () => {
+      void syncCollapsedHeight();
+      void snapToWorkAreaEdge();
+    };
+    window.addEventListener("blur", handleWindowBlur);
 
     void listen<SystemSnapshot>("system-snapshot", ({ payload }) => {
       handleSnapshot(payload);
@@ -596,6 +601,7 @@ function App() {
         window.clearTimeout(snapTimerRef.current);
       }
 
+      window.removeEventListener("blur", handleWindowBlur);
       unlistenSnapshot?.();
       unlistenMoved?.();
     };

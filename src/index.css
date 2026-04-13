@@ -15,13 +15,3 @@ body {
     sans-serif;
   background: transparent;
 }
-
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(circle at top right, rgba(18, 95, 204, 0.32), transparent 38%),
-    radial-gradient(circle at bottom left, rgba(59, 199, 163, 0.16), transparent 34%);
-  pointer-events: none;
-}
