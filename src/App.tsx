@@ -223,10 +223,10 @@ function getAnchoredExpandedPosition(
     return { position, direction: "unknown" };
   }
 
-  const minX = monitor.workArea.position.x;
-  const maxX = monitor.workArea.position.x + monitor.workArea.size.width - nextSize.width;
-  const minY = monitor.workArea.position.y;
-  const maxY = monitor.workArea.position.y + monitor.workArea.size.height - nextSize.height;
+  const minX = monitor.position.x;
+  const maxX = monitor.position.x + monitor.size.width - nextSize.width;
+  const minY = monitor.position.y;
+  const maxY = monitor.position.y + monitor.size.height - nextSize.height;
   const heightDelta = nextSize.height - currentSize.height;
   const downwardY = position.y;
   const upwardY = position.y - heightDelta;
