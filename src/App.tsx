@@ -1,6 +1,7 @@
 import { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import {
   LogicalSize,
   PhysicalPosition,
@@ -340,6 +341,10 @@ async function requestUpdateWithRetry() {
   }
 }
 
+async function setOverlayInteractive(interactive: boolean) {
+  await invoke("set_overlay_interactive", { interactive });
+}
+
 type SparklineProps = {
   values: number[];
   tone: "cpu" | "memory" | "download" | "upload";
@@ -569,6 +574,10 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
+    void setOverlayInteractive(false).catch(() => {
+      // Ignore mode sync failure and keep the widget usable.
+    });
+
     void syncCollapsedHeight();
 
     let unlistenSnapshot: (() => void) | undefined;
@@ -653,6 +662,10 @@ function App() {
           direction: expansionDirection,
         };
 
+    if (nextExpanded) {
+      await setOverlayInteractive(true);
+    }
+
     setExpanded(nextExpanded);
     if (nextExpanded) {
       setExpansionDirection(expansionPlan.direction as ExpansionDirection);
@@ -681,6 +694,7 @@ function App() {
     });
 
     if (!nextExpanded) {
+      await setOverlayInteractive(false);
       await snapToWorkAreaEdge();
     }
   };

@@ -2,7 +2,7 @@ use serde::Serialize;
 use std::{thread, time::{Duration, SystemTime, UNIX_EPOCH}};
 use sysinfo::{CpuRefreshKind, MemoryRefreshKind, Networks, RefreshKind, System};
 use tauri::{
-    AppHandle, Emitter, Manager, RunEvent, WindowEvent,
+    AppHandle, Emitter, Manager, RunEvent, Runtime, WindowEvent,
     menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -16,10 +16,24 @@ const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 const MENU_AUTOSTART: &str = "toggle-autostart";
 const MENU_QUIT: &str = "quit";
 
-fn enforce_overlay_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, interactive: bool) {
     let _ = window.set_always_on_top(true);
+    let _ = window.set_skip_taskbar(true);
+    let _ = window.set_focusable(interactive);
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     let _ = window.set_visible_on_all_workspaces(true);
+}
+
+#[tauri::command]
+fn set_overlay_interactive<R: Runtime>(app: AppHandle<R>, interactive: bool) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        apply_overlay_mode(&window, interactive);
+        if interactive {
+            let _ = window.set_focus();
+        }
+    }
+
+    Ok(())
 }
 
 #[derive(Clone, Serialize)]
@@ -43,6 +57,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        .invoke_handler(tauri::generate_handler![set_overlay_interactive])
         .setup(|app| {
             build_tray(app)?;
             initialize_window(app.app_handle());
@@ -93,9 +108,8 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 fn initialize_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-        enforce_overlay_window(&window);
+        apply_overlay_mode(&window, false);
         let _ = window.show();
-        let _ = window.set_focus();
 
         let needs_default_position = app
             .path()
@@ -147,7 +161,8 @@ fn handle_window_event(app: &AppHandle, event: WindowEvent) {
         }
         WindowEvent::Focused(false) | WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
             if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-                enforce_overlay_window(&window);
+                let interactive = window.is_focused().unwrap_or(false);
+                apply_overlay_mode(&window, interactive);
             }
         }
         _ => {}
@@ -161,10 +176,9 @@ fn toggle_window<R: tauri::Runtime>(app: &AppHandle<R>) {
             let _ = app.save_window_state(StateFlags::all());
             let _ = window.hide();
         } else {
-            enforce_overlay_window(&window);
+            apply_overlay_mode(&window, false);
             let _ = window.show();
             let _ = window.unminimize();
-            let _ = window.set_focus();
         }
     }
 }
