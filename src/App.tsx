@@ -169,10 +169,10 @@ function getDockedPosition(
     return null;
   }
 
-  const minX = monitor.workArea.position.x;
-  const maxX = monitor.workArea.position.x + monitor.workArea.size.width - size.width;
-  const minY = monitor.workArea.position.y;
-  const maxY = monitor.workArea.position.y + monitor.workArea.size.height - size.height;
+  const minX = monitor.position.x;
+  const maxX = monitor.position.x + monitor.size.width - size.width;
+  const minY = monitor.position.y;
+  const maxY = monitor.position.y + monitor.size.height - size.height;
 
   const taskbarEdge = getTaskbarEdge(monitor);
   const clampedX = clamp(position.x, minX, Math.max(minX, maxX));
@@ -227,10 +227,10 @@ function getAnchoredExpandedPosition(
   const maxX = monitor.position.x + monitor.size.width - nextSize.width;
   const minY = monitor.position.y;
   const maxY = monitor.position.y + monitor.size.height - nextSize.height;
-  const heightDelta = nextSize.height - currentSize.height;
+  const bottomEdge = position.y + currentSize.height;
   const downwardY = position.y;
-  const upwardY = position.y - heightDelta;
-  const canExpandDown = downwardY <= maxY;
+  const upwardY = bottomEdge - nextSize.height;
+  const canExpandDown = position.y + nextSize.height <= monitor.position.y + monitor.size.height;
   const nextY = canExpandDown ? downwardY : upwardY;
 
   return {
