@@ -62,8 +62,8 @@ type UpdateState = {
 
 const FALLBACK_COLLAPSED_HEIGHT = 40;
 const FALLBACK_COLLAPSED_WIDTH = 240;
-const EXPANDED_HEIGHT = 330;
-const EXPANDED_WIDTH = 320;
+const EXPANDED_HEIGHT = 620;
+const EXPANDED_WIDTH = 360;
 const HISTORY_LIMIT = 300;
 const SNAP_THRESHOLD = 28;
 const MIN_COLLAPSED_HEIGHT = 28;
@@ -327,6 +327,19 @@ function formatProgress(downloadedBytes?: number, totalBytes?: number) {
   return `已下载 ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} (${percent.toFixed(0)}%)`;
 }
 
+async function requestUpdateWithRetry() {
+  try {
+    return await check({ timeout: 15000 });
+  } catch (firstError) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1200));
+    try {
+      return await check({ timeout: 15000 });
+    } catch {
+      throw firstError;
+    }
+  }
+}
+
 type SparklineProps = {
   values: number[];
   tone: "cpu" | "memory" | "download" | "upload";
@@ -447,7 +460,7 @@ function App() {
     });
 
     try {
-      const update = await check();
+      const update = await requestUpdateWithRetry();
       availableUpdateRef.current = update;
 
       if (!update) {
@@ -468,7 +481,7 @@ function App() {
       availableUpdateRef.current = null;
       setUpdateState({
         stage: "error",
-        message: `检查更新失败：${error instanceof Error ? error.message : String(error)}`,
+        message: `检查更新失败：${error instanceof Error ? error.message : String(error)}。如果刚发布新版本，可稍等片刻再试。`,
       });
     }
   }, []);
@@ -477,7 +490,7 @@ function App() {
     try {
       let update = availableUpdateRef.current;
       if (!update) {
-        update = await check();
+        update = await requestUpdateWithRetry();
         availableUpdateRef.current = update;
       }
 

@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Network Watch",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "identifier": "com.codex.networkwatch",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -19,7 +19,7 @@
         "minWidth": 160,
         "minHeight": 28,
         "maxWidth": 420,
-        "maxHeight": 330,
+        "maxHeight": 700,
         "decorations": false,
         "alwaysOnTop": true,
         "transparent": true,

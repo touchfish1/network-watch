@@ -16,6 +16,12 @@ const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 const MENU_AUTOSTART: &str = "toggle-autostart";
 const MENU_QUIT: &str = "quit";
 
+fn enforce_overlay_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) {
+    let _ = window.set_always_on_top(true);
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let _ = window.set_visible_on_all_workspaces(true);
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "snake_case")]
 struct SystemSnapshot {
@@ -87,6 +93,7 @@ fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
 
 fn initialize_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+        enforce_overlay_window(&window);
         let _ = window.show();
         let _ = window.set_focus();
 
@@ -130,12 +137,20 @@ fn handle_menu_event<R: tauri::Runtime>(
 }
 
 fn handle_window_event(app: &AppHandle, event: WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        api.prevent_close();
-        if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
-            let _ = app.save_window_state(StateFlags::all());
-            let _ = window.hide();
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                let _ = app.save_window_state(StateFlags::all());
+                let _ = window.hide();
+            }
         }
+        WindowEvent::Focused(false) | WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
+            if let Some(window) = app.get_webview_window(WINDOW_LABEL) {
+                enforce_overlay_window(&window);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -146,6 +161,7 @@ fn toggle_window<R: tauri::Runtime>(app: &AppHandle<R>) {
             let _ = app.save_window_state(StateFlags::all());
             let _ = window.hide();
         } else {
+            enforce_overlay_window(&window);
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();
