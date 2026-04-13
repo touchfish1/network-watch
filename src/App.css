@@ -37,10 +37,11 @@ select {
   --upload: #ffb55c;
   --font-main: "IBM Plex Sans", "Segoe UI", sans-serif;
   --font-display: "Bahnschrift", "Segoe UI", sans-serif;
-  min-height: 100vh;
+  display: inline-block;
   padding: 0;
   color: var(--text-primary);
   font-family: var(--font-main);
+  background: transparent;
 }
 
 .theme-cyberpunk {
@@ -139,16 +140,6 @@ select {
   --font-display: "Georgia", "Times New Roman", serif;
 }
 
-.shell::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background:
-    radial-gradient(circle at top right, var(--glow-a), transparent 36%),
-    radial-gradient(circle at bottom left, var(--glow-b), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 52%);
-  pointer-events: none;
-}
 
 .widget {
   position: relative;
@@ -181,15 +172,6 @@ select {
   order: 2;
 }
 
-.widget::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 42%),
-    linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.03), transparent);
-  pointer-events: none;
-}
 
 .widget-header,
 .status-strip,
@@ -272,6 +254,8 @@ select {
   opacity: 1;
   overflow-y: auto;
   transform: translateY(0);
+  padding-bottom: 18px;
+  scroll-padding-bottom: 24px;
 }
 
 .widget-header {
@@ -488,7 +472,7 @@ select {
 }
 
 .layout-debug {
-  display: grid;
+  display: none;
   gap: 4px;
   margin: 0 14px 10px;
   padding: 8px 10px;
@@ -563,7 +547,7 @@ select {
 
 .details-visible {
   max-height: 400px;
-  padding: 0 14px 16px;
+  padding: 0 14px 20px;
   opacity: 1;
   transform: translateY(0);
 }
@@ -630,8 +614,9 @@ select {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 0 14px 14px;
+  padding: 2px 14px 24px;
   font-size: 11px;
+  line-height: 1.5;
 }
 
 @media (max-width: 560px) {
