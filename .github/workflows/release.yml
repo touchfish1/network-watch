@@ -22,7 +22,23 @@ on:
         type: boolean
 
 jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_name != '' && inputs.release_name || format('Network Watch {0}', github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name) }}
+          body: "Automated multi-platform build from GitHub Actions."
+          draft: false
+          prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
+          target_commitish: ${{ github.sha }}
+
   publish-tauri:
+    needs: prepare-release
     permissions:
       contents: write
     strategy:
