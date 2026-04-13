@@ -17,6 +17,9 @@ button {
 
 .widget {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
@@ -25,6 +28,22 @@ button {
     0 16px 36px rgba(3, 8, 18, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(18px);
+}
+
+.widget-expand-down .status-strip {
+  order: 1;
+}
+
+.widget-expand-down .expanded-panel {
+  order: 2;
+}
+
+.widget-expand-up .expanded-panel {
+  order: 1;
+}
+
+.widget-expand-up .status-strip {
+  order: 2;
 }
 
 .widget::before {
@@ -108,11 +127,18 @@ button {
 .expanded-panel {
   max-height: 0;
   opacity: 0;
-  transform: translateY(-8px);
   transition:
     max-height 220ms ease,
     opacity 160ms ease,
     transform 220ms ease;
+}
+
+.widget-expand-down .expanded-panel {
+  transform: translateY(-8px);
+}
+
+.widget-expand-up .expanded-panel {
+  transform: translateY(8px);
 }
 
 .expanded-panel-visible {

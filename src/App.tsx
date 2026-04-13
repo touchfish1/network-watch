@@ -36,6 +36,8 @@ type LayoutDebugInfo = {
   direction: string;
 };
 
+type ExpansionDirection = "down" | "up";
+
 const FALLBACK_COLLAPSED_HEIGHT = 40;
 const FALLBACK_COLLAPSED_WIDTH = 240;
 const EXPANDED_HEIGHT = 330;
@@ -277,6 +279,7 @@ function Sparkline({ values, tone }: SparklineProps) {
 function App() {
   const appWindow = useMemo(() => getCurrentWindow(), []);
   const [expanded, setExpanded] = useState(false);
+  const [expansionDirection, setExpansionDirection] = useState<ExpansionDirection>("down");
   const [collapsedHeight, setCollapsedHeight] = useState(FALLBACK_COLLAPSED_HEIGHT);
   const [collapsedWidth, setCollapsedWidth] = useState(FALLBACK_COLLAPSED_WIDTH);
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
@@ -430,16 +433,29 @@ function App() {
     const centerY = position.y + size.height / 2;
     const monitor = await monitorFromPoint(centerX, centerY);
 
-    setExpanded(nextExpanded);
-
     const nextWidth = nextExpanded ? EXPANDED_WIDTH : collapsedWidth;
     const nextHeight = nextExpanded ? EXPANDED_HEIGHT : collapsedHeight;
-    const expansionPlan = getAnchoredExpandedPosition(
-      position,
-      { width: size.width, height: size.height },
-      { width: nextWidth, height: nextHeight },
-      monitor,
-    );
+    const currentBottom = position.y + size.height;
+
+    const expansionPlan = nextExpanded
+      ? getAnchoredExpandedPosition(
+          position,
+          { width: size.width, height: size.height },
+          { width: nextWidth, height: nextHeight },
+          monitor,
+        )
+      : {
+          position: {
+            x: position.x,
+            y: expansionDirection === "up" ? currentBottom - nextHeight : position.y,
+          },
+          direction: expansionDirection,
+        };
+
+    setExpanded(nextExpanded);
+    if (nextExpanded) {
+      setExpansionDirection(expansionPlan.direction as ExpansionDirection);
+    }
 
     setLayoutDebugInfo({
       phase: nextExpanded ? "expand" : "collapse",
@@ -528,7 +544,9 @@ function App() {
 
   return (
     <main className={`shell ${expanded ? "shell-expanded" : ""}`}>
-      <section className="widget">
+      <section
+        className={`widget ${expanded && expansionDirection === "up" ? "widget-expand-up" : "widget-expand-down"}`}
+      >
         <div
           className={`status-strip ${expanded ? "status-strip-expanded" : ""}`}
           style={
