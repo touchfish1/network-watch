@@ -16,10 +16,11 @@ function Get-NextVersion([string]$version) {
   return "{0}.{1}.{2}" -f $parts[0], $parts[1], ([int]$parts[2] + 1)
 }
 
-function Update-JsonVersion($path, $version) {
-  $json = Get-Content $path -Raw | ConvertFrom-Json
-  $json.version = $version
-  $json | ConvertTo-Json -Depth 100 | Set-Content $path
+function Update-VersionText($path, $currentVersion, $nextVersion) {
+  $content = Get-Content $path -Raw
+  $escapedCurrent = [regex]::Escape($currentVersion)
+  $updated = $content -replace '("version"\s*:\s*")' + $escapedCurrent + '(")', ('$1' + $nextVersion + '$2')
+  Set-Content $path $updated
 }
 
 $packageJsonPath = "package.json"
@@ -32,16 +33,14 @@ $currentVersion = $packageJson.version
 $nextVersion = Get-NextVersion $currentVersion
 $tagName = "v$nextVersion"
 
-Update-JsonVersion $packageJsonPath $nextVersion
-Update-JsonVersion $packageLockPath $nextVersion
+Update-VersionText $packageJsonPath $currentVersion $nextVersion
+Update-VersionText $packageLockPath $currentVersion $nextVersion
 
 $cargoToml = Get-Content $cargoTomlPath -Raw
 $cargoToml = $cargoToml -replace 'version = "' + [regex]::Escape($currentVersion) + '"', 'version = "' + $nextVersion + '"'
 Set-Content $cargoTomlPath $cargoToml
 
-$tauriConfig = Get-Content $tauriConfigPath -Raw | ConvertFrom-Json
-$tauriConfig.version = $nextVersion
-$tauriConfig | ConvertTo-Json -Depth 100 | Set-Content $tauriConfigPath
+Update-VersionText $tauriConfigPath $currentVersion $nextVersion
 
 cargo check --manifest-path src-tauri/Cargo.toml | Out-Null
 npm run build | Out-Null
