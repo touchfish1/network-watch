@@ -1,4 +1,5 @@
 import { startTransition, useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen } from "@tauri-apps/api/event";
 import {
   LogicalSize,
@@ -7,6 +8,8 @@ import {
   getCurrentWindow,
   monitorFromPoint,
 } from "@tauri-apps/api/window";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check, type Update as AvailableUpdate } from "@tauri-apps/plugin-updater";
 import "./App.css";
 
 type SystemSnapshot = {
@@ -37,6 +40,25 @@ type LayoutDebugInfo = {
 };
 
 type ExpansionDirection = "down" | "up";
+type TaskbarEdge = "top" | "right" | "bottom" | "left";
+type ThemeId = "cyberpunk" | "japanese" | "chinese" | "western";
+type UpdateStage = "idle" | "checking" | "available" | "latest" | "downloading" | "installing" | "error";
+
+type ThemeDefinition = {
+  name: string;
+  mood: string;
+  detail: string;
+  swatches: [string, string, string];
+};
+
+type UpdateState = {
+  stage: UpdateStage;
+  message: string;
+  availableVersion?: string;
+  releaseNotes?: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+};
 
 const FALLBACK_COLLAPSED_HEIGHT = 40;
 const FALLBACK_COLLAPSED_WIDTH = 240;
@@ -50,8 +72,34 @@ const MIN_COLLAPSED_WIDTH = 160;
 const MAX_COLLAPSED_WIDTH = 420;
 const POSITION_SETTLE_DELAY = 140;
 const CLICK_DRAG_THRESHOLD = 6;
+const THEME_STORAGE_KEY = "network-watch-theme";
 
-type TaskbarEdge = "top" | "right" | "bottom" | "left";
+const themeDefinitions: Record<ThemeId, ThemeDefinition> = {
+  cyberpunk: {
+    name: "赛博朋克",
+    mood: "霓虹洋红、冷青电流、深夜雨幕",
+    detail: "参考高饱和霓虹对比与暗色赛博城市灯牌氛围。",
+    swatches: ["#35f2ff", "#ff4fd8", "#0a1024"],
+  },
+  japanese: {
+    name: "日式风格",
+    mood: "靛青、朱红、和纸留白",
+    detail: "参考日式传统配色中的藍色、朱色与纸感留白层次。",
+    swatches: ["#223a5e", "#c24b3c", "#f3ead8"],
+  },
+  chinese: {
+    name: "中国风",
+    mood: "绛红、玉青、鎏金云纹",
+    detail: "参考中式传统色中的胭脂红、玉色与金色器物质感。",
+    swatches: ["#b6413c", "#2f8f83", "#d8ab4f"],
+  },
+  western: {
+    name: "欧美风",
+    mood: "海军蓝、皮革棕、黄铜复古",
+    detail: "参考欧美复古海报与皮革黄铜材质的暖色层次。",
+    swatches: ["#1c3254", "#8c5a3c", "#d6b36a"],
+  },
+};
 
 const emptySnapshot: SystemSnapshot = {
   timestamp: Date.now(),
@@ -78,6 +126,11 @@ const emptyDebugInfo: LayoutDebugInfo = {
   workArea: "-",
   monitor: "-",
   direction: "-",
+};
+
+const idleUpdateState: UpdateState = {
+  stage: "idle",
+  message: "点击检查更新，可自动下载并完成安装。",
 };
 
 function pushSample(series: number[], value: number) {
@@ -261,6 +314,19 @@ function buildPath(values: number[]) {
     .join(" ");
 }
 
+function formatProgress(downloadedBytes?: number, totalBytes?: number) {
+  if (!downloadedBytes) {
+    return "准备下载更新包…";
+  }
+
+  if (!totalBytes || totalBytes <= 0) {
+    return `已下载 ${formatBytes(downloadedBytes)}`;
+  }
+
+  const percent = Math.min((downloadedBytes / totalBytes) * 100, 100);
+  return `已下载 ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} (${percent.toFixed(0)}%)`;
+}
+
 type SparklineProps = {
   values: number[];
   tone: "cpu" | "memory" | "download" | "upload";
@@ -284,13 +350,20 @@ function App() {
   const [collapsedWidth, setCollapsedWidth] = useState(FALLBACK_COLLAPSED_WIDTH);
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
   const [history, setHistory] = useState<MetricHistory>(emptyHistory);
-  const [lastUpdated, setLastUpdated] = useState("Waiting for system data...");
+  const [lastUpdated, setLastUpdated] = useState("等待系统数据…");
   const [layoutDebugInfo, setLayoutDebugInfo] = useState<LayoutDebugInfo>(emptyDebugInfo);
+  const [theme, setTheme] = useState<ThemeId>(() => {
+    const saved = window.localStorage.getItem(THEME_STORAGE_KEY);
+    return saved && saved in themeDefinitions ? (saved as ThemeId) : "cyberpunk";
+  });
+  const [appVersion, setAppVersion] = useState("--");
+  const [updateState, setUpdateState] = useState<UpdateState>(idleUpdateState);
   const snapTimerRef = useRef<number | null>(null);
   const isProgrammaticLayoutRef = useRef(false);
   const statusTextRef = useRef<HTMLDivElement | null>(null);
   const collapsedPointerRef = useRef<{ x: number; y: number } | null>(null);
   const collapsedDraggingRef = useRef(false);
+  const availableUpdateRef = useRef<AvailableUpdate | null>(null);
 
   const syncCollapsedHeight = useEffectEvent(async () => {
     const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
@@ -366,6 +439,121 @@ function App() {
       setLastUpdated(new Date(payload.timestamp).toLocaleTimeString());
     });
   });
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateState({
+      stage: "checking",
+      message: "正在检查 GitHub Release 更新…",
+    });
+
+    try {
+      const update = await check();
+      availableUpdateRef.current = update;
+
+      if (!update) {
+        setUpdateState({
+          stage: "latest",
+          message: "当前已经是最新版本。",
+        });
+        return;
+      }
+
+      setUpdateState({
+        stage: "available",
+        availableVersion: update.version,
+        releaseNotes: update.body,
+        message: `检测到新版本 v${update.version}，点击后自动下载并安装。`,
+      });
+    } catch (error) {
+      availableUpdateRef.current = null;
+      setUpdateState({
+        stage: "error",
+        message: `检查更新失败：${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }, []);
+
+  const installUpdate = useCallback(async () => {
+    try {
+      let update = availableUpdateRef.current;
+      if (!update) {
+        update = await check();
+        availableUpdateRef.current = update;
+      }
+
+      if (!update) {
+        setUpdateState({
+          stage: "latest",
+          message: "当前已经是最新版本。",
+        });
+        return;
+      }
+
+      let downloadedBytes = 0;
+      let totalBytes = 0;
+
+      setUpdateState({
+        stage: "downloading",
+        availableVersion: update.version,
+        releaseNotes: update.body,
+        message: "准备下载更新包…",
+      });
+
+      await update.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength ?? 0;
+          setUpdateState({
+            stage: "downloading",
+            availableVersion: update.version,
+            releaseNotes: update.body,
+            downloadedBytes,
+            totalBytes,
+            message: formatProgress(downloadedBytes, totalBytes),
+          });
+          return;
+        }
+
+        if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          setUpdateState({
+            stage: "downloading",
+            availableVersion: update.version,
+            releaseNotes: update.body,
+            downloadedBytes,
+            totalBytes,
+            message: formatProgress(downloadedBytes, totalBytes),
+          });
+          return;
+        }
+
+        setUpdateState({
+          stage: "installing",
+          availableVersion: update.version,
+          releaseNotes: update.body,
+          downloadedBytes,
+          totalBytes,
+          message: "安装完成，正在重启应用…",
+        });
+      });
+
+      await relaunch();
+    } catch (error) {
+      setUpdateState({
+        stage: "error",
+        message: `安装更新失败：${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void getVersion().then(setAppVersion).catch(() => {
+      setAppVersion("--");
+    });
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+  }, [theme]);
 
   useEffect(() => {
     void syncCollapsedHeight();
@@ -543,7 +731,7 @@ function App() {
   };
 
   return (
-    <main className={`shell ${expanded ? "shell-expanded" : ""}`}>
+    <main className={`shell theme-${theme} ${expanded ? "shell-expanded" : ""}`}>
       <section
         className={`widget ${expanded && expansionDirection === "up" ? "widget-expand-up" : "widget-expand-down"}`}
       >
@@ -575,15 +763,89 @@ function App() {
           <header className="widget-header" onPointerDown={(event) => void handleDragStart(event)}>
             <div className="title-block">
               <span className="eyebrow">Network Watch</span>
-              <h1>详细监控面板</h1>
+              <h1>控制中心</h1>
             </div>
             <div className="header-meta">
+              <span>v{appVersion}</span>
               <span>{lastUpdated}</span>
               <button type="button" className="expand-button" onClick={() => void toggleExpanded()}>
                 收起
               </button>
             </div>
           </header>
+
+          <section className="settings-panel">
+            <article className="settings-card update-card">
+              <div className="settings-card-header">
+                <div>
+                  <span className="settings-label">在线升级</span>
+                  <strong>自动下载并重启生效</strong>
+                </div>
+                <button
+                  type="button"
+                  className={`primary-action ${updateState.stage === "available" ? "primary-action-hot" : ""}`}
+                  disabled={
+                    updateState.stage === "checking" ||
+                    updateState.stage === "downloading" ||
+                    updateState.stage === "installing"
+                  }
+                  onClick={() =>
+                    void (updateState.stage === "available" ? installUpdate() : checkForUpdates())
+                  }
+                >
+                  {updateState.stage === "available"
+                    ? "立即更新"
+                    : updateState.stage === "checking"
+                      ? "检查中…"
+                      : updateState.stage === "downloading"
+                        ? "下载中…"
+                        : updateState.stage === "installing"
+                          ? "安装中…"
+                          : "检查更新"}
+                </button>
+              </div>
+              <p className="settings-copy">{updateState.message}</p>
+              <div className="update-meta">
+                <span>当前版本 v{appVersion}</span>
+                <span>{updateState.availableVersion ? `目标版本 v${updateState.availableVersion}` : "发布源：GitHub Release"}</span>
+              </div>
+              {updateState.releaseNotes ? (
+                <div className="release-notes">
+                  <span className="settings-label">更新说明</span>
+                  <p>{updateState.releaseNotes}</p>
+                </div>
+              ) : null}
+            </article>
+
+            <article className="settings-card">
+              <div className="settings-card-header">
+                <div>
+                  <span className="settings-label">主题切换</span>
+                  <strong>让状态条有自己的气质</strong>
+                </div>
+                <span className="theme-current">{themeDefinitions[theme].name}</span>
+              </div>
+              <div className="theme-grid">
+                {Object.entries(themeDefinitions).map(([themeKey, themeValue]) => (
+                  <button
+                    key={themeKey}
+                    type="button"
+                    className={`theme-tile ${theme === themeKey ? "theme-tile-active" : ""}`}
+                    onClick={() => setTheme(themeKey as ThemeId)}
+                  >
+                    <div className="theme-swatches">
+                      {themeValue.swatches.map((swatch) => (
+                        <span key={swatch} style={{ background: swatch }} />
+                      ))}
+                    </div>
+                    <strong>{themeValue.name}</strong>
+                    <span>{themeValue.mood}</span>
+                    <small>{themeValue.detail}</small>
+                  </button>
+                ))}
+              </div>
+            </article>
+          </section>
 
           <div className="layout-debug">
             <span>phase {layoutDebugInfo.phase}</span>
@@ -652,7 +914,7 @@ function App() {
 
           <footer className="widget-footer">
             <span>{lastUpdated}</span>
-            <span>拖近屏幕工作区边缘会自动贴边</span>
+            <span>{themeDefinitions[theme].name} · 拖近工作区边缘会自动贴边</span>
           </footer>
         </div>
       </section>

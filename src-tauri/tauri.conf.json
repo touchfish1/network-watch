@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Network Watch",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "identifier": "com.codex.networkwatch",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -35,6 +35,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -43,5 +44,16 @@
       "icons/icon.png",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/touchfish1/network-watch/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMzNzNCODEzOTNFRDJCMUIKUldRYksrMlRFN2h6dy83dWdWdWE4dHBpUlNXdnIrNnNxbEx1amdkdU5MWVkxK0trVk4wRFBTVEEK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
