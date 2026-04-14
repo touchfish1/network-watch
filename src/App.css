@@ -230,6 +230,36 @@ select {
   -webkit-user-select: none;
 }
 
+.resize-handle {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+}
+
+.resize-handle-collapsed {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.resize-handle-expanded {
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  border-right: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.resize-handle-expanded:hover {
+  opacity: 1;
+}
+
 .status-strip-expanded {
   border: none;
   border-radius: 0;
@@ -285,11 +315,11 @@ select {
 }
 
 .widget-expand-down .expanded-panel {
-  transform: translateY(-8px);
+  transform: translateY(8px);
 }
 
 .widget-expand-up .expanded-panel {
-  transform: translateY(8px);
+  transform: translateY(-8px);
 }
 
 .expanded-panel-visible {
@@ -303,7 +333,9 @@ select {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  padding-top: 8px;
   padding-bottom: 18px;
+  scroll-padding-top: 16px;
   scroll-padding-bottom: 24px;
 }
 
@@ -313,6 +345,16 @@ select {
   justify-content: space-between;
   gap: 14px;
   padding: 10px 14px 8px;
+  cursor: move;
+  -webkit-app-region: drag;
+}
+
+.widget-header button,
+.widget-header a,
+.widget-header input,
+.widget-header select,
+.widget-header textarea {
+  -webkit-app-region: no-drag;
 }
 
 .title-block {
@@ -340,9 +382,13 @@ select {
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 12px;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+.header-meta .expand-button {
+  margin-left: 8px;
 }
 
 .expand-button,
@@ -361,7 +407,7 @@ select {
 .expand-button,
 .primary-action {
   border-radius: 999px;
-  padding: 7px 12px;
+  padding: 6px 10px;
   background: var(--button-bg);
 }
 
@@ -388,8 +434,30 @@ select {
 
 .settings-panel {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   padding: 0 14px 10px;
+}
+
+.update-card {
+  grid-column: span 2;
+}
+
+.overview-card,
+.theme-card {
+  grid-column: span 1;
+}
+
+@media (max-width: 380px) {
+  .settings-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .update-card,
+  .overview-card,
+  .theme-card {
+    grid-column: auto;
+  }
 }
 
 .expanded-panel-visible::-webkit-scrollbar {
@@ -407,6 +475,35 @@ select {
   padding: 14px;
   background: var(--panel);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.update-card {
+  padding: 12px;
+}
+
+.update-card .settings-card-header strong {
+  font-size: 14px;
+}
+
+.update-card .settings-copy {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.update-card .update-meta {
+  margin-top: 8px;
+  font-size: 10px;
+}
+
+.update-card .release-notes {
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.update-card .release-notes p {
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .settings-card-header {
@@ -673,6 +770,10 @@ select {
   .theme-grid,
   .overview-grid,
   .details {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-panel {
     grid-template-columns: 1fr;
   }
 
