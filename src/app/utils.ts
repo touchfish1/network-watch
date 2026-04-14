@@ -14,11 +14,20 @@ import {
 } from "./constants";
 import type { TaskbarEdge } from "./types";
 
+/**
+ * 前端纯工具函数集合（无状态、可复用）。
+ *
+ * 分类：
+ * - 数值/格式化：Bytes、速率、百分比、进度\n+ * - 几何与窗口位置：taskbar 边缘判定、吸附/展开定位\n+ * - sparkline：路径生成
+ */
 export function pushSample(series: number[], value: number) {
   const next = [...series, value];
   return next.slice(-HISTORY_LIMIT);
 }
 
+/**
+ * 按 1024 进制格式化字节数（B/KB/MB/GB/TB）。
+ */
 export function formatBytes(value: number) {
   if (value <= 0) {
     return "0 B";
@@ -34,6 +43,9 @@ export function formatRate(value: number) {
   return `${formatBytes(value)}/s`;
 }
 
+/**
+ * 用更紧凑的形式展示速率（适合收起态/小空间）。
+ */
 export function formatCompactRate(value: number) {
   if (value <= 0) {
     return "0B/s";
@@ -50,6 +62,9 @@ export function formatPercent(value: number) {
   return `${value.toFixed(value >= 10 ? 0 : 1)}%`;
 }
 
+/**
+ * 把内存 used/total 转成百分比文本。
+ */
 export function formatMemoryUsage(used: number, total: number) {
   if (total <= 0) {
     return "0%";
@@ -62,6 +77,9 @@ export function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * 推断任务栏厚度（用于收起态窗口高度）。
+ */
 export function getTaskbarThickness(monitor: Awaited<ReturnType<typeof monitorFromPoint>>) {
   if (!monitor) {
     return FALLBACK_COLLAPSED_HEIGHT;
@@ -232,6 +250,25 @@ export function formatProgress(downloadedBytes?: number, totalBytes?: number) {
 
   const percent = Math.min((downloadedBytes / totalBytes) * 100, 100);
   return `已下载 ${formatBytes(downloadedBytes)} / ${formatBytes(totalBytes)} (${percent.toFixed(0)}%)`;
+}
+
+export function formatUptimeSeconds(totalSeconds: number) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) {
+    return "0m";
+  }
+
+  const seconds = Math.floor(totalSeconds);
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) {
+    return `${days}d ${hours}h`;
+  }
+  if (hours > 0) {
+    return `${hours}h ${minutes}m`;
+  }
+  return `${minutes}m`;
 }
 
 export function getDefaultExpandedSize() {

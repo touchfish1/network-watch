@@ -1,3 +1,13 @@
+//! 托盘图标与菜单。
+//!
+//! 这里负责创建托盘图标、构建菜单并处理交互：
+//! - 左键点击：切换主窗口显示/隐藏
+//! - 菜单项：显示/隐藏、开机启动、退出
+//!
+//! 说明：
+//! - 开机启动能力来自 `tauri-plugin-autostart`
+//! - 窗口显示/隐藏由 `windowing` 模块统一处理
+
 use tauri::{
     AppHandle,
     menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder},
@@ -8,6 +18,10 @@ use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
 use crate::{constants, windowing};
 
+/// 创建托盘与菜单，并绑定事件处理。
+///
+/// - `开机启动` 为可勾选项，初始状态来自 autostart plugin
+/// - `退出` 会先保存 window-state，再调用 `app.exit(0)`
 pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     let autostart_checked = app.autolaunch().is_enabled().unwrap_or(false);
     let autostart_item = CheckMenuItemBuilder::new("开机启动")
@@ -42,6 +56,7 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// 托盘图标事件（目前只关心左键抬起）。
 fn handle_tray_event(app: &AppHandle, event: TrayIconEvent) {
     if let TrayIconEvent::Click {
         button: MouseButton::Left,
@@ -53,6 +68,7 @@ fn handle_tray_event(app: &AppHandle, event: TrayIconEvent) {
     }
 }
 
+/// 托盘菜单事件分发（通过常量菜单 ID 匹配）。
 fn handle_menu_event<R: tauri::Runtime>(
     app: &AppHandle<R>,
     event: MenuEvent,
@@ -69,6 +85,7 @@ fn handle_menu_event<R: tauri::Runtime>(
     }
 }
 
+/// 切换开机启动，并同步菜单勾选状态。
 fn toggle_autostart<R: tauri::Runtime>(app: &AppHandle<R>, autostart_item: &CheckMenuItem<R>) {
     let autolaunch = app.autolaunch();
     let enabled = autolaunch.is_enabled().unwrap_or(false);

@@ -1,3 +1,15 @@
+//! 悬浮窗 overlay/置顶策略。
+//!
+//! 目标是在不同平台上尽量同时满足：
+//! - 窗口置顶、从任务栏隐藏、透明无边框
+//! - 展开态需要可点击/可滚动/可交互
+//! - 收起态尽量不抢焦点（尤其在 Windows 上）
+//! - 在 Windows 上抵抗“topmost 层级被系统打掉”的边缘场景
+//!
+//! 重要约束（Windows）：
+//! - `focusable(false)` 在部分情况下会导致窗口**完全收不到鼠标事件**，从而无法点击展开。
+//! - 因此我们保持窗口 focusable，并用 `SWP_NOACTIVATE`（搭配前端 blur 处理）降低抢焦点的副作用。
+
 use std::{thread, time::Duration};
 
 use tauri::{AppHandle, Manager, Runtime};
@@ -9,6 +21,10 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
 };
 
+/// Windows：强制将窗口提升到 topmost 层级（不激活窗口）。
+///
+/// 这是一种“更底层”的兜底：即使 `set_always_on_top(true)` 已经调用，
+/// 仍可能在某些系统交互后失效，因此在可见时周期性重申。
 #[cfg(target_os = "windows")]
 fn force_windows_topmost<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     if let Ok(hwnd) = window.hwnd() {
@@ -26,6 +42,10 @@ fn force_windows_topmost<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     }
 }
 
+/// 应用 overlay 模式（置顶/隐藏任务栏/可见工作区等）。
+///
+/// - 该函数可能被频繁调用（窗口移动/缩放、Windows guard 轮询），因此以“幂等、忽略错误”为设计。
+/// - 参数 `_interactive` 预留为语义占位：实际是否可交互主要由前端决定；后端只在必要时切换状态并重申窗口属性。
 pub fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, _interactive: bool) {
     let _ = window.set_always_on_top(true);
     let _ = window.set_skip_taskbar(true);
@@ -40,6 +60,9 @@ pub fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, _interac
     force_windows_topmost(window);
 }
 
+/// Windows：topmost 置顶守护线程。
+///
+/// 当窗口可见时周期性调用 `apply_overlay_mode`，降低置顶层级被打掉的概率。\n+/// 它读取 `state::overlay_interactive()`，用于在必要时重新应用与交互相关的窗口状态。
 #[cfg(target_os = "windows")]
 pub fn start_windows_topmost_guard(app: AppHandle) {
     thread::spawn(move || loop {
@@ -56,6 +79,9 @@ pub fn start_windows_topmost_guard(app: AppHandle) {
     });
 }
 
+/// 设置 overlay 交互性（由前端驱动）。
+///
+/// - **interactive=true**：展开态，允许交互。此时尝试 `set_focus()`，让键盘/滚轮行为更一致。\n+/// - **interactive=false**：收起态，尽量降低干扰（前端也会在 blur 时回退）。\n+///\n+/// 该命令会更新原子状态，并立即对窗口重申 overlay 策略（幂等）。
 #[tauri::command]
 pub fn set_overlay_interactive<R: Runtime>(
     app: tauri::AppHandle<R>,

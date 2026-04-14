@@ -411,6 +411,26 @@ select {
   background: var(--button-bg);
 }
 
+.expand-button-secondary {
+  opacity: 0.92;
+  font-weight: 700;
+}
+
+.expand-button-has-update {
+  position: relative;
+}
+
+.update-dot {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff3b30;
+  box-shadow: 0 0 0 2px var(--button-bg), 0 0 0 1px rgba(0, 0, 0, 0.22);
+}
+
 .expand-button:hover,
 .primary-action:hover,
 .theme-tile:hover {
@@ -481,6 +501,27 @@ select {
   padding: 12px;
 }
 
+.link-button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.link-button:hover {
+  opacity: 0.9;
+}
+
+.link-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .update-card .settings-card-header strong {
   font-size: 14px;
 }
@@ -497,11 +538,11 @@ select {
 }
 
 .update-card .release-notes {
-  margin-top: 10px;
-  padding-top: 10px;
+  margin-top: 8px;
 }
 
 .update-card .release-notes p {
+  margin: 0;
   font-size: 11px;
   line-height: 1.5;
 }
@@ -640,8 +681,55 @@ select {
 
 .overview-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.kv-table {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.kv-table-secondary {
+  margin-top: 10px;
+}
+
+.kv-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-soft);
+}
+
+.kv-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kv-value {
+  flex: 0 0 auto;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nic-card,
+.disk-card {
+  grid-column: span 1;
+}
+
+.process-card {
+  grid-column: span 2;
 }
 
 .overview-item {

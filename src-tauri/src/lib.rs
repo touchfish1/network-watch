@@ -1,3 +1,13 @@
+//! Tauri 后端入口与模块编排。
+//!
+//! 这个 crate 负责把几个相对独立的能力组合成一个“常驻置顶悬浮窗”应用：
+//! - `tray`：托盘菜单与开机启动开关
+//! - `windowing`：窗口初始化、关闭拦截、显示/隐藏切换与事件分发
+//! - `sampler`：系统指标采样线程，按固定周期向前端广播 `system-snapshot`
+//! - `overlay`：置顶/不抢焦点/仍可点击的窗口叠加策略（Windows 额外有 topmost guard）
+//! - `diagnostics`/`state`：跨线程状态与诊断数据（供前端排障/显示）
+//!
+//! 前端通过 `invoke` 调用少量命令（例如切换 overlay 交互性），并通过事件订阅接收采样快照。
 mod constants;
 mod diagnostics;
 mod overlay;
@@ -10,6 +20,17 @@ use tauri::Manager;
 use diagnostics::get_runtime_diagnostics;
 use overlay::set_overlay_interactive;
 
+/// 启动并运行 Tauri 应用（后端主入口）。
+///
+/// 主要工作：
+/// - 初始化所需插件（更新、进程重启、窗口状态持久化、开机启动等）
+/// - 注册前端可 `invoke` 的命令（例如 overlay 交互开关、运行时诊断）
+/// - 在 `setup` 阶段创建托盘、初始化窗口位置/状态，并启动采样线程
+/// - 在运行循环中把 `RunEvent` 分发给 `windowing` 处理（如关闭拦截、移动/缩放等）
+///
+/// 说明：
+/// - 采样数据通过事件 `system-snapshot` 广播给前端（见 `constants::EVENT_SYSTEM_SNAPSHOT`）。
+/// - Windows 下会启动 topmost guard，以降低“被系统/其他窗口抢走置顶层级”的边缘问题（见 `overlay`）。
 pub fn run() {
     tauri::Builder::default()
         .plugin(

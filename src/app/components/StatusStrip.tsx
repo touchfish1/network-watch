@@ -3,6 +3,12 @@ import type React from "react";
 import { formatCompactRate, formatMemoryUsage, formatPercent } from "../utils";
 import type { SystemSnapshot } from "../types";
 
+/**
+ * 收起态状态条（悬浮窗最小形态）。
+ *
+ * 交互说明：
+ * - 点击/拖拽/缩放等手势由上层 `useWindowLayout` 统一处理并通过 props 传入\n+ * - 该组件只负责展示当前快照的关键摘要（CPU/MEM/上下行）
+ */
 type StatusStripProps = {
   expanded: boolean;
   collapsedHeight: number;

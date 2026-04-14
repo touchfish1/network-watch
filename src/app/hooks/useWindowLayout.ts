@@ -20,6 +20,12 @@ import type { ExpansionDirection, MetricHistory, SystemSnapshot } from "../types
 import { clamp, getAnchoredExpandedPosition, getDefaultExpandedSize, getDockedPosition, getTaskbarThickness } from "../utils";
 import { setOverlayInteractive } from "../tauri";
 
+/**
+ * 管理悬浮窗窗口布局与交互（收起/展开、拖拽、缩放、贴边、尺寸持久化、事件订阅）。
+ *
+ * 关键点：
+ * - **采样事件订阅**：监听后端广播的 `system-snapshot`，更新 `snapshot` 并将原始采样交给 `onSnapshot`\n+ * - **尺寸持久化**：收起宽度与展开尺寸写入 localStorage\n+ * - **拖拽/点击区分**：收起态通过阈值区分“拖动窗口”与“点击切换展开”\n+ * - **贴边策略**：窗口移动/失焦后会尝试吸附到工作区边缘（避免飘在中间遮挡）\n+ * - **overlay 交互性**：展开时开启、收起/失焦时关闭（后端也有兜底）
+ */
 type UseWindowLayoutArgs = {
   isTauriEnv: boolean;
   emptySnapshot: SystemSnapshot;
@@ -28,6 +34,9 @@ type UseWindowLayoutArgs = {
 };
 
 export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSnapshot }: UseWindowLayoutArgs) {
+  /**
+   * 仅在 Tauri 环境获取窗口对象；浏览器环境必须为 null（否则会触发运行时错误）。
+   */
   const appWindow = useMemo(() => (isTauriEnv ? getCurrentWindow() : null), [isTauriEnv]);
   const [expanded, setExpanded] = useState(false);
   const [expansionDirection, setExpansionDirection] = useState<ExpansionDirection>("down");
@@ -68,6 +77,9 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const collapsedPointerRef = useRef<{ x: number; y: number } | null>(null);
   const collapsedDraggingRef = useRef(false);
 
+  /**
+   * 根据当前显示器的 taskbar/dock 厚度同步收起态高度，并在收起态时立即应用窗口尺寸。
+   */
   const syncCollapsedHeight = useEffectEvent(async () => {
     if (!appWindow) {
       return;
@@ -136,6 +148,9 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     });
   }, [appWindow, applyWindowLayoutSafely]);
 
+  /**
+   * 接收来自后端的系统快照，并同步到 state，同时把 payload 透传给调用方以更新历史曲线。
+   */
   const handleSnapshot = useEffectEvent((payload: SystemSnapshot) => {
     setSnapshot(payload);
     onSnapshot(payload);
@@ -372,7 +387,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       return;
     }
 
-    if (expanded || event.button !== 0) {
+    if (event.button !== 0) {
       return;
     }
 
@@ -382,6 +397,10 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
 
   const handleCollapsedPointerMove = async (event: React.PointerEvent<HTMLElement>) => {
     if (!appWindow) {
+      return;
+    }
+
+    if (expanded) {
       return;
     }
 
@@ -403,10 +422,6 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const handleCollapsedPointerUp = async () => {
     if (!appWindow) {
       setExpanded((current) => !current);
-      return;
-    }
-
-    if (expanded) {
       return;
     }
 

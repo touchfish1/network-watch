@@ -18,6 +18,17 @@ import {
   pushSample,
 } from "./app/utils";
 
+/**
+ * 前端应用入口（单窗口悬浮窗）。
+ *
+ * 数据流概览：
+ * - 后端（Tauri/Rust）每秒广播一次 `system-snapshot`
+ * - `useWindowLayout` 订阅该事件并维护窗口展开/收起、拖拽/缩放、贴边等布局状态
+ * - 组件层：`StatusStrip`（收起态）+ `ControlCenter`（展开态）
+ *
+ * 兼容说明：
+ * - 在浏览器开发环境（`npm run dev`）下没有 Tauri API，因此需要 `isTauri()` 守卫。
+ */
 const emptySnapshot: SystemSnapshot = {
   timestamp: Date.now(),
   cpu_usage: 0,
@@ -25,6 +36,14 @@ const emptySnapshot: SystemSnapshot = {
   memory_total: 0,
   network_download: 0,
   network_upload: 0,
+  nics: [],
+  active_nic_id: null,
+  disks: [],
+  system_disk: null,
+  uptime_seconds: 0,
+  process_count: 0,
+  top_processes_cpu: [],
+  top_processes_memory: [],
 };
 
 const emptyHistory: MetricHistory = {
@@ -34,8 +53,10 @@ const emptyHistory: MetricHistory = {
   upload: [],
 };
 
-
 function App() {
+  /**
+   * `isTauri()` 仅在首次渲染求值，避免在 render 期间触发任何潜在的环境探测抖动。
+   */
   const isTauriEnv = useMemo(() => isTauri(), []);
   const [lastUpdated, setLastUpdated] = useState("等待系统数据…");
 
@@ -44,6 +65,7 @@ function App() {
     emptySnapshot,
     emptyHistory,
     onSnapshot: (payload) => {
+      // 采样频率较高（1s），用 transition 降低 UI 更新的阻塞感。
       startTransition(() => {
         layout.setHistory((current) => ({
           cpu: pushSample(current.cpu, payload.cpu_usage),
@@ -89,6 +111,9 @@ function App() {
     void (updateState.stage === "available" ? installUpdate() : checkForUpdates());
   }, [checkForUpdates, installUpdate, updateState.stage]);
 
+  /**
+   * 获取应用版本号（仅桌面端）。用于更新卡片与标题栏展示。
+   */
   useEffect(() => {
     if (!isTauriEnv) {
       setAppVersion("dev");
@@ -102,6 +127,25 @@ function App() {
       });
   }, [isTauriEnv]);
 
+  /**
+   * 静默轮询更新（10 分钟一次）。
+   *
+   * - 仅在桌面端启用\n+   * - 使用 silent 模式避免打断用户（不切换成 “检查中…”）
+   */
+  useEffect(() => {
+    if (!isTauriEnv) {
+      return;
+    }
+
+    void checkForUpdates({ silent: true });
+    const timer = window.setInterval(() => {
+      void checkForUpdates({ silent: true });
+    }, 10 * 60 * 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [checkForUpdates, isTauriEnv]);
 
   const diagnosticsLabel = useMemo(() => {
     if (!diagnostics) {

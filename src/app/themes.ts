@@ -1,5 +1,10 @@
 import type { ThemeDefinition, ThemeId } from "./types";
 
+/**
+ * 内置主题列表。
+ *
+ * 前端仅存储 `ThemeId`（localStorage），具体配色细节在 CSS 中通过 `.theme-*` 实现。
+ */
 export const themeDefinitions: Record<ThemeId, ThemeDefinition> = {
   cyberpunk: {
     name: "赛博朋克",

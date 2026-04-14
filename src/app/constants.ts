@@ -1,3 +1,9 @@
+/**
+ * 前端常量集中定义。
+ *
+ * 说明：
+ * - 这里的数值多与“窗口行为/布局/交互阈值”相关\n+ * - 与 CSS/后端行为共同决定整体体验（例如吸附阈值、展开默认尺寸）
+ */
 export const FALLBACK_COLLAPSED_HEIGHT = 40;
 export const FALLBACK_COLLAPSED_WIDTH = 240;
 
