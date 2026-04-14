@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Network Watch",
-  "version": "0.3.11",
+  "version": "0.3.12",
   "identifier": "com.codex.networkwatch",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -18,7 +18,7 @@
         "height": 40,
         "minWidth": 160,
         "minHeight": 28,
-        "maxWidth": 420,
+        "maxWidth": 900,
         "maxHeight": 700,
         "decorations": false,
         "alwaysOnTop": true,
@@ -30,7 +30,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: https: data: blob:; media-src 'self' asset: https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https: http://localhost:1420 ws://localhost:1420; script-src 'self'"
     }
   },
   "bundle": {

@@ -313,6 +313,7 @@ select {
   justify-content: space-between;
   gap: 14px;
   padding: 10px 14px 8px;
+  position: relative;
 }
 
 .title-block {
@@ -346,6 +347,7 @@ select {
 }
 
 .expand-button,
+.collapse-button,
 .primary-action,
 .theme-tile {
   border: 1px solid var(--button-border);
@@ -359,10 +361,25 @@ select {
 }
 
 .expand-button,
+.collapse-button,
 .primary-action {
   border-radius: 999px;
   padding: 7px 12px;
   background: var(--button-bg);
+}
+
+.collapse-button {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  padding: 10px 14px;
+  min-height: 40px;
+  min-width: 72px;
+  z-index: 2;
+}
+
+.header-meta {
+  padding-right: 88px;
 }
 
 .expand-button:hover,
@@ -386,10 +403,18 @@ select {
   transform: none;
 }
 
-.settings-panel {
+.control-grid {
   display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
   gap: 10px;
   padding: 0 14px 10px;
+  align-items: start;
+}
+
+.control-col {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
 }
 
 .expanded-panel-visible::-webkit-scrollbar {
@@ -529,7 +554,7 @@ select {
 }
 
 .overview-card {
-  margin: 0 14px 10px;
+  margin: 0;
   padding: 14px;
 }
 
@@ -670,6 +695,10 @@ select {
 }
 
 @media (max-width: 560px) {
+  .control-grid {
+    grid-template-columns: 1fr;
+  }
+
   .theme-grid,
   .overview-grid,
   .details {

@@ -53,13 +53,9 @@ type UpdateState = {
 const FALLBACK_COLLAPSED_HEIGHT = 40;
 const FALLBACK_COLLAPSED_WIDTH = 240;
 const EXPANDED_HEIGHT = 620;
-const EXPANDED_WIDTH = 360;
+const EXPANDED_WIDTH = 760;
 const HISTORY_LIMIT = 300;
 const SNAP_THRESHOLD = 28;
-const MIN_COLLAPSED_HEIGHT = 28;
-const MAX_COLLAPSED_HEIGHT = 64;
-const MIN_COLLAPSED_WIDTH = 160;
-const MAX_COLLAPSED_WIDTH = 420;
 const POSITION_SETTLE_DELAY = 140;
 const CLICK_DRAG_THRESHOLD = 6;
 const THEME_STORAGE_KEY = "network-watch-theme";
@@ -160,18 +156,6 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
 }
 
-function getTaskbarThickness(monitor: Awaited<ReturnType<typeof monitorFromPoint>>) {
-  if (!monitor) {
-    return FALLBACK_COLLAPSED_HEIGHT;
-  }
-
-  const horizontalInset = monitor.size.height - monitor.workArea.size.height;
-  const verticalInset = monitor.size.width - monitor.workArea.size.width;
-  const thickness = Math.max(horizontalInset, verticalInset, 0);
-
-  return clamp(thickness, MIN_COLLAPSED_HEIGHT, MAX_COLLAPSED_HEIGHT);
-}
-
 function getTaskbarEdge(monitor: Monitor | null): TaskbarEdge {
   if (!monitor) {
     return "bottom";
@@ -203,6 +187,7 @@ function getDockedPosition(
     return null;
   }
 
+  // Use workArea bounds so the widget won't overlap the taskbar.
   const workAreaX = monitor.workArea.position.x;
   const workAreaY = monitor.workArea.position.y;
   const workAreaWidth = monitor.workArea.size.width;
@@ -261,6 +246,7 @@ function getAnchoredExpandedPosition(
     return { position, direction: "unknown" };
   }
 
+  // Use workArea bounds so expanded panel won't overlap the taskbar.
   const workAreaX = monitor.workArea.position.x;
   const workAreaY = monitor.workArea.position.y;
   const workAreaWidth = monitor.workArea.size.width;
@@ -347,11 +333,17 @@ function Sparkline({ values, tone }: SparklineProps) {
 }
 
 function App() {
-  const appWindow = useMemo(() => getCurrentWindow(), []);
+  const appWindow = useMemo(() => {
+    try {
+      return getCurrentWindow();
+    } catch {
+      return null;
+    }
+  }, []);
   const [expanded, setExpanded] = useState(false);
   const [expansionDirection, setExpansionDirection] = useState<ExpansionDirection>("down");
-  const [collapsedHeight, setCollapsedHeight] = useState(FALLBACK_COLLAPSED_HEIGHT);
-  const [collapsedWidth, setCollapsedWidth] = useState(FALLBACK_COLLAPSED_WIDTH);
+  const collapsedHeight = FALLBACK_COLLAPSED_HEIGHT;
+  const collapsedWidth = FALLBACK_COLLAPSED_WIDTH;
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
   const [history, setHistory] = useState<MetricHistory>(emptyHistory);
   const [lastUpdated, setLastUpdated] = useState("等待系统数据…");
@@ -368,29 +360,11 @@ function App() {
   const collapsedDraggingRef = useRef(false);
   const availableUpdateRef = useRef<AvailableUpdate | null>(null);
 
-  const syncCollapsedHeight = useEffectEvent(async () => {
-    const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
-    const centerX = position.x + size.width / 2;
-    const centerY = position.y + size.height / 2;
-    const monitor = await monitorFromPoint(centerX, centerY);
-    const nextCollapsedHeight = getTaskbarThickness(monitor);
-
-    setCollapsedHeight((current) => (current === nextCollapsedHeight ? current : nextCollapsedHeight));
-
-    if (!expanded) {
-      isProgrammaticLayoutRef.current = true;
-      try {
-        await appWindow.setSize(new LogicalSize(collapsedWidth, nextCollapsedHeight));
-      } finally {
-        window.setTimeout(() => {
-          isProgrammaticLayoutRef.current = false;
-        }, POSITION_SETTLE_DELAY);
-      }
-    }
-  });
-
   const applyWindowLayoutSafely = useCallback(
     async (nextLayout: { width: number; height: number; x: number; y: number }) => {
+      if (!appWindow) {
+        return;
+      }
       isProgrammaticLayoutRef.current = true;
       try {
         await appWindow.setSize(new LogicalSize(nextLayout.width, nextLayout.height));
@@ -405,6 +379,9 @@ function App() {
   );
 
   const snapToWorkAreaEdge = useCallback(async () => {
+    if (!appWindow) {
+      return;
+    }
     const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
     const centerX = position.x + size.width / 2;
     const centerY = position.y + size.height / 2;
@@ -563,12 +540,9 @@ function App() {
       // Ignore mode sync failure and keep the widget usable.
     });
 
-    void syncCollapsedHeight();
-
     let unlistenSnapshot: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
     const handleWindowBlur = () => {
-      void syncCollapsedHeight();
       void snapToWorkAreaEdge();
     };
     window.addEventListener("blur", handleWindowBlur);
@@ -578,6 +552,14 @@ function App() {
     }).then((dispose) => {
       unlistenSnapshot = dispose;
     });
+
+    if (!appWindow) {
+      return () => {
+        window.removeEventListener("blur", handleWindowBlur);
+        unlistenSnapshot?.();
+        unlistenMoved?.();
+      };
+    }
 
     void appWindow.onMoved(() => {
       if (isProgrammaticLayoutRef.current) {
@@ -589,7 +571,6 @@ function App() {
       }
 
       snapTimerRef.current = window.setTimeout(() => {
-        void syncCollapsedHeight();
         void snapToWorkAreaEdge();
       }, POSITION_SETTLE_DELAY);
     }).then((dispose) => {
@@ -607,27 +588,11 @@ function App() {
     };
   }, [appWindow, snapToWorkAreaEdge]);
 
-  useEffect(() => {
-    const textWidth = statusTextRef.current?.scrollWidth ?? FALLBACK_COLLAPSED_WIDTH - 16;
-    const nextCollapsedWidth = clamp(textWidth + 16, MIN_COLLAPSED_WIDTH, MAX_COLLAPSED_WIDTH);
-
-    if (nextCollapsedWidth === collapsedWidth) {
+  const toggleExpanded = async () => {
+    if (!appWindow) {
+      setExpanded((current) => !current);
       return;
     }
-
-    setCollapsedWidth(nextCollapsedWidth);
-
-    if (!expanded) {
-      isProgrammaticLayoutRef.current = true;
-      void appWindow.setSize(new LogicalSize(nextCollapsedWidth, collapsedHeight)).finally(() => {
-        window.setTimeout(() => {
-          isProgrammaticLayoutRef.current = false;
-        }, POSITION_SETTLE_DELAY);
-      });
-    }
-  }, [appWindow, collapsedHeight, collapsedWidth, expanded, snapshot]);
-
-  const toggleExpanded = async () => {
     const nextExpanded = !expanded;
     const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
     const centerX = position.x + size.width / 2;
@@ -676,6 +641,9 @@ function App() {
   };
 
   const handleDragStart = async (event: React.PointerEvent<HTMLElement>) => {
+    if (!appWindow) {
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -699,6 +667,9 @@ function App() {
   };
 
   const handleCollapsedPointerMove = async (event: React.PointerEvent<HTMLElement>) => {
+    if (!appWindow) {
+      return;
+    }
     if (expanded || collapsedDraggingRef.current || !collapsedPointerRef.current) {
       return;
     }
@@ -769,113 +740,119 @@ function App() {
               <h1>控制中心</h1>
             </div>
             <div className="header-meta">
-              <span>v{appVersion}</span>
-              <span>{lastUpdated}</span>
-              <button type="button" className="expand-button" onClick={() => void toggleExpanded()}>
+              <button type="button" className="collapse-button" onClick={() => void toggleExpanded()}>
                 收起
               </button>
+              <span>v{appVersion}</span>
+              <span>{lastUpdated}</span>
             </div>
           </header>
 
-          <section className="settings-panel">
-            <article className="settings-card update-card">
-              <div className="settings-card-header">
-                <div>
-                  <span className="settings-label">在线升级</span>
-                  <strong>自动下载并重启生效</strong>
+          <section className="control-grid">
+            <div className="control-col control-col-left">
+              <article className="settings-card">
+                <div className="settings-card-header">
+                  <div>
+                    <span className="settings-label">主题切换</span>
+                    <strong>让状态条有自己的气质</strong>
+                  </div>
+                  <span className="theme-current">{themeDefinitions[theme].name}</span>
                 </div>
-                <button
-                  type="button"
-                  className={`primary-action ${updateState.stage === "available" ? "primary-action-hot" : ""}`}
-                  disabled={
-                    updateState.stage === "checking" ||
-                    updateState.stage === "downloading" ||
-                    updateState.stage === "installing"
-                  }
-                  onClick={() =>
-                    void (updateState.stage === "available" ? installUpdate() : checkForUpdates())
-                  }
-                >
-                  {updateState.stage === "available"
-                    ? "立即更新"
-                    : updateState.stage === "checking"
-                      ? "检查中…"
-                      : updateState.stage === "downloading"
-                        ? "下载中…"
-                        : updateState.stage === "installing"
-                          ? "安装中…"
-                          : "检查更新"}
-                </button>
-              </div>
-              <p className="settings-copy">{updateState.message}</p>
-              <div className="update-meta">
-                <span>当前版本 v{appVersion}</span>
-                <span>{updateState.availableVersion ? `目标版本 v${updateState.availableVersion}` : "发布源：GitHub Release"}</span>
-              </div>
-              {updateState.releaseNotes ? (
-                <div className="release-notes">
-                  <span className="settings-label">更新说明</span>
-                  <p>{updateState.releaseNotes}</p>
+                <div className="theme-grid">
+                  {Object.entries(themeDefinitions).map(([themeKey, themeValue]) => (
+                    <button
+                      key={themeKey}
+                      type="button"
+                      className={`theme-tile ${theme === themeKey ? "theme-tile-active" : ""}`}
+                      onClick={() => setTheme(themeKey as ThemeId)}
+                    >
+                      <div className="theme-swatches">
+                        {themeValue.swatches.map((swatch) => (
+                          <span key={swatch} style={{ background: swatch }} />
+                        ))}
+                      </div>
+                      <strong>{themeValue.name}</strong>
+                      <span>{themeValue.mood}</span>
+                      <small>{themeValue.detail}</small>
+                    </button>
+                  ))}
                 </div>
-              ) : null}
-            </article>
+              </article>
+            </div>
 
-            <article className="overview-card">
-              <div className="overview-header">
-                <span className="settings-label">系统总览</span>
-                <span className="theme-current">{lastUpdated}</span>
-              </div>
-              <div className="overview-grid">
-                <div className="overview-item">
-                  <span className="stat-label">CPU</span>
-                  <strong>{formatPercent(snapshot.cpu_usage)}</strong>
-                  <span className="stat-subtitle">整机占用</span>
+            <div className="control-col control-col-right">
+              <article className="overview-card">
+                <div className="overview-header">
+                  <span className="settings-label">系统总览</span>
+                  <span className="theme-current">{lastUpdated}</span>
                 </div>
-                <div className="overview-item">
-                  <span className="stat-label">Memory</span>
-                  <strong>{formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</strong>
-                  <span className="stat-subtitle">
-                    {formatBytes(snapshot.memory_used)} / {formatBytes(snapshot.memory_total)}
+                <div className="overview-grid">
+                  <div className="overview-item">
+                    <span className="stat-label">CPU</span>
+                    <strong>{formatPercent(snapshot.cpu_usage)}</strong>
+                    <span className="stat-subtitle">整机占用</span>
+                  </div>
+                  <div className="overview-item">
+                    <span className="stat-label">Memory</span>
+                    <strong>{formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</strong>
+                    <span className="stat-subtitle">
+                      {formatBytes(snapshot.memory_used)} / {formatBytes(snapshot.memory_total)}
+                    </span>
+                  </div>
+                  <div className="overview-item">
+                    <span className="stat-label">Network</span>
+                    <strong>
+                      ↓ {formatCompactRate(snapshot.network_download)} / ↑ {formatCompactRate(snapshot.network_upload)}
+                    </strong>
+                    <span className="stat-subtitle">实时上下行</span>
+                  </div>
+                </div>
+              </article>
+
+              <article className="settings-card update-card">
+                <div className="settings-card-header">
+                  <div>
+                    <span className="settings-label">在线升级</span>
+                    <strong>自动下载并重启生效</strong>
+                  </div>
+                  <button
+                    type="button"
+                    className={`primary-action ${updateState.stage === "available" ? "primary-action-hot" : ""}`}
+                    disabled={
+                      updateState.stage === "checking" ||
+                      updateState.stage === "downloading" ||
+                      updateState.stage === "installing"
+                    }
+                    onClick={() =>
+                      void (updateState.stage === "available" ? installUpdate() : checkForUpdates())
+                    }
+                  >
+                    {updateState.stage === "available"
+                      ? "立即更新"
+                      : updateState.stage === "checking"
+                        ? "检查中…"
+                        : updateState.stage === "downloading"
+                          ? "下载中…"
+                          : updateState.stage === "installing"
+                            ? "安装中…"
+                            : "检查更新"}
+                  </button>
+                </div>
+                <p className="settings-copy">{updateState.message}</p>
+                <div className="update-meta">
+                  <span>当前版本 v{appVersion}</span>
+                  <span>
+                    {updateState.availableVersion ? `目标版本 v${updateState.availableVersion}` : "发布源：GitHub Release"}
                   </span>
                 </div>
-                <div className="overview-item">
-                  <span className="stat-label">Network</span>
-                  <strong>
-                    ↓ {formatCompactRate(snapshot.network_download)} / ↑ {formatCompactRate(snapshot.network_upload)}
-                  </strong>
-                  <span className="stat-subtitle">实时上下行</span>
-                </div>
-              </div>
-            </article>
-
-            <article className="settings-card">
-              <div className="settings-card-header">
-                <div>
-                  <span className="settings-label">主题切换</span>
-                  <strong>让状态条有自己的气质</strong>
-                </div>
-                <span className="theme-current">{themeDefinitions[theme].name}</span>
-              </div>
-              <div className="theme-grid">
-                {Object.entries(themeDefinitions).map(([themeKey, themeValue]) => (
-                  <button
-                    key={themeKey}
-                    type="button"
-                    className={`theme-tile ${theme === themeKey ? "theme-tile-active" : ""}`}
-                    onClick={() => setTheme(themeKey as ThemeId)}
-                  >
-                    <div className="theme-swatches">
-                      {themeValue.swatches.map((swatch) => (
-                        <span key={swatch} style={{ background: swatch }} />
-                      ))}
-                    </div>
-                    <strong>{themeValue.name}</strong>
-                    <span>{themeValue.mood}</span>
-                    <small>{themeValue.detail}</small>
-                  </button>
-                ))}
-              </div>
-            </article>
+                {updateState.releaseNotes ? (
+                  <div className="release-notes">
+                    <span className="settings-label">更新说明</span>
+                    <p>{updateState.releaseNotes}</p>
+                  </div>
+                ) : null}
+              </article>
+            </div>
           </section>
 
           <div className={`details ${expanded ? "details-visible" : ""}`}>

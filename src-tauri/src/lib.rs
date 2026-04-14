@@ -21,6 +21,8 @@ const MENU_AUTOSTART: &str = "toggle-autostart";
 const MENU_QUIT: &str = "quit";
 #[cfg(target_os = "windows")]
 const WINDOW_TOPMOST_GUARD_INTERVAL_MS: u64 = 1200;
+const SAMPLER_VISIBLE_INTERVAL_MS: u64 = 1000;
+const SAMPLER_HIDDEN_INTERVAL_MS: u64 = 5000;
 
 #[cfg(target_os = "windows")]
 fn force_windows_topmost<R: Runtime>(window: &tauri::WebviewWindow<R>) {
@@ -246,8 +248,16 @@ fn start_sampler(app: AppHandle) {
                 .with_memory(MemoryRefreshKind::everything()),
         );
         let mut networks = Networks::new_with_refreshed_list();
+        let mut previous_network_download: Option<u64> = None;
+        let mut previous_network_upload: Option<u64> = None;
+        let mut previous_timestamp_ms: Option<u64> = None;
 
         loop {
+            let window_visible = app
+                .get_webview_window(WINDOW_LABEL)
+                .and_then(|window| window.is_visible().ok())
+                .unwrap_or(true);
+
             system.refresh_cpu_usage();
             system.refresh_memory();
             networks.refresh(true);
@@ -256,19 +266,49 @@ fn start_sampler(app: AppHandle) {
             let memory_used = system.used_memory();
             let memory_total = system.total_memory();
 
-            let mut network_download = 0_u64;
-            let mut network_upload = 0_u64;
+            let mut network_download_total = 0_u64;
+            let mut network_upload_total = 0_u64;
 
             for (_name, data) in &networks {
-                network_download = network_download.saturating_add(data.received());
-                network_upload = network_upload.saturating_add(data.transmitted());
+                network_download_total = network_download_total.saturating_add(data.received());
+                network_upload_total = network_upload_total.saturating_add(data.transmitted());
             }
 
+            let timestamp_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or_default();
+
+            let dt_ms = previous_timestamp_ms
+                .and_then(|prev| timestamp_ms.checked_sub(prev))
+                .filter(|value| *value > 0);
+
+            let (network_download, network_upload) = match (
+                previous_network_download,
+                previous_network_upload,
+                dt_ms,
+            ) {
+                (Some(prev_down), Some(prev_up), Some(dt_ms)) => {
+                    let dt_seconds = (dt_ms as f64) / 1000.0;
+                    if dt_seconds <= 0.0 {
+                        (0_u64, 0_u64)
+                    } else {
+                        let delta_down = network_download_total.saturating_sub(prev_down);
+                        let delta_up = network_upload_total.saturating_sub(prev_up);
+                        let down_rate = ((delta_down as f64) / dt_seconds).round() as u64;
+                        let up_rate = ((delta_up as f64) / dt_seconds).round() as u64;
+                        (down_rate, up_rate)
+                    }
+                }
+                _ => (0_u64, 0_u64),
+            };
+
+            previous_network_download = Some(network_download_total);
+            previous_network_upload = Some(network_upload_total);
+            previous_timestamp_ms = Some(timestamp_ms);
+
             let snapshot = SystemSnapshot {
-                timestamp: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|duration| duration.as_millis() as u64)
-                    .unwrap_or_default(),
+                timestamp: timestamp_ms,
                 cpu_usage,
                 memory_used,
                 memory_total,
@@ -277,7 +317,12 @@ fn start_sampler(app: AppHandle) {
             };
 
             let _ = app.emit(EVENT_SYSTEM_SNAPSHOT, snapshot);
-            thread::sleep(Duration::from_secs(1));
+            let sleep_ms = if window_visible {
+                SAMPLER_VISIBLE_INTERVAL_MS
+            } else {
+                SAMPLER_HIDDEN_INTERVAL_MS
+            };
+            thread::sleep(Duration::from_millis(sleep_ms));
         }
     });
 }
