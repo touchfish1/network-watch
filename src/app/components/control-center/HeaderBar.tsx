@@ -8,6 +8,7 @@ type HeaderBarProps = {
   clickThroughEnabled: boolean;
   onToggleClickThrough: () => void;
   onScrollToUpdateCard: () => void;
+  settingsMenu: React.ReactNode;
   onCollapse: () => void;
   onHeaderPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 };
@@ -19,6 +20,7 @@ export function HeaderBar({
   clickThroughEnabled,
   onToggleClickThrough,
   onScrollToUpdateCard,
+  settingsMenu,
   onCollapse,
   onHeaderPointerDown,
 }: HeaderBarProps) {
@@ -27,14 +29,15 @@ export function HeaderBar({
   }, [onCollapse]);
 
   return (
-    <header className="widget-header" data-tauri-drag-region onPointerDown={onHeaderPointerDown}>
-      <div className="title-block">
+    <header className="widget-header">
+      <div className="title-block" data-tauri-drag-region onPointerDown={onHeaderPointerDown}>
         <span className="eyebrow">Network Watch</span>
         <h1>控制中心</h1>
       </div>
       <div className="header-meta">
         <span>v{appVersion}</span>
         <span>{lastUpdated}</span>
+        {settingsMenu}
         <button
           type="button"
           className={`expand-button ${clickThroughEnabled ? "primary-action-hot" : ""}`}

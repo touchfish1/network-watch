@@ -9,6 +9,7 @@ import {
 } from "./app/constants";
 import { ControlCenter } from "./app/components/ControlCenter";
 import { StatusStrip } from "./app/components/StatusStrip";
+import { SettingsWindow } from "./app/windows/SettingsWindow";
 import type { MetricHistory, SystemSnapshot, ThemeId } from "./app/types";
 import { useOverlayInteraction } from "./app/hooks/useOverlayInteraction";
 import { useRuntimeDiagnostics } from "./app/hooks/useRuntimeDiagnostics";
@@ -19,6 +20,7 @@ import {
   pushSample,
 } from "./app/utils";
 import { setClickThroughEnabled } from "./app/tauri";
+import { loadUpdatePollIntervalMinutes, saveUpdatePollIntervalMinutes, type UpdatePollIntervalMinutes } from "./app/config/settings";
 
 /**
  * 前端应用入口（单窗口悬浮窗）。
@@ -57,6 +59,15 @@ const emptyHistory: MetricHistory = {
 };
 
 function App() {
+  const isSettingsWindow = useMemo(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("window") === "settings";
+  }, []);
+
+  if (isSettingsWindow) {
+    return <SettingsWindow />;
+  }
+
   /**
    * `isTauri()` 仅在首次渲染求值，避免在 render 期间触发任何潜在的环境探测抖动。
    */
@@ -109,6 +120,9 @@ function App() {
   const diagnostics = useRuntimeDiagnostics(isTauriEnv);
   const { updateState, checkForUpdates, installUpdate } = useUpdater(isTauriEnv);
   useOverlayInteraction(isTauriEnv);
+  const [updatePollIntervalMinutes, setUpdatePollIntervalMinutes] = useState<UpdatePollIntervalMinutes>(() =>
+    loadUpdatePollIntervalMinutes(),
+  );
 
   const onCheckOrInstallUpdate = useCallback(() => {
     void (updateState.stage === "available" ? installUpdate() : checkForUpdates());
@@ -143,12 +157,16 @@ function App() {
     void checkForUpdates({ silent: true });
     const timer = window.setInterval(() => {
       void checkForUpdates({ silent: true });
-    }, 10 * 60 * 1000);
+    }, updatePollIntervalMinutes * 60 * 1000);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [checkForUpdates, isTauriEnv]);
+  }, [checkForUpdates, isTauriEnv, updatePollIntervalMinutes]);
+
+  useEffect(() => {
+    saveUpdatePollIntervalMinutes(updatePollIntervalMinutes);
+  }, [updatePollIntervalMinutes]);
 
   /**
    * 启动时把“鼠标穿透”配置同步到后端（Windows）。\n+   * 由于开启后窗口不可点击，因此 UI 也提供托盘入口作为兜底关闭方式。
@@ -208,6 +226,8 @@ function App() {
           theme={theme}
           setTheme={setTheme}
           updateState={updateState}
+          updatePollIntervalMinutes={updatePollIntervalMinutes}
+          setUpdatePollIntervalMinutes={setUpdatePollIntervalMinutes}
           onCheckOrInstallUpdate={onCheckOrInstallUpdate}
           onCollapse={() => void toggleExpanded()}
           onHeaderPointerDown={(event) => void handleDragStart(event)}

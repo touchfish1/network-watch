@@ -6,16 +6,12 @@ import { Sparkline } from "./Sparkline";
 import { setClickThroughEnabled } from "../tauri";
 import { CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
-  defaultCardOrder,
-  defaultCardVisibility,
   loadCardOrder,
   loadCardVisibility,
-  saveCardOrder,
-  saveCardVisibility,
   type CardId,
 } from "../config/uiLayout";
 import { HeaderBar } from "./control-center/HeaderBar";
-import { LayoutCard } from "./control-center/LayoutCard";
+import { openSettingsWindow } from "../tauri";
 import { OverviewCard } from "./control-center/OverviewCard";
 import { ConnectionsCard } from "./control-center/ConnectionsCard";
 import { NicCard } from "./control-center/NicCard";
@@ -72,38 +68,14 @@ export function ControlCenter({
     updateCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
   const hasUpdate = updateState.stage === "available";
-
-  const [cardOrder, setCardOrder] = useState<CardId[]>(() => loadCardOrder());
-  const [cardVisibility, setCardVisibility] = useState<Record<CardId, boolean>>(() => loadCardVisibility());
-
-  const moveCard = useCallback((id: CardId, direction: -1 | 1) => {
-    setCardOrder((current) => {
-      const index = current.indexOf(id);
-      if (index < 0) return current;
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= current.length) return current;
-      const next = [...current];
-      const [item] = next.splice(index, 1);
-      next.splice(nextIndex, 0, item);
-      saveCardOrder(next);
-      return next;
+  const openSettings = useCallback(() => {
+    void openSettingsWindow().catch(() => {
+      // ignore
     });
   }, []);
 
-  const toggleCard = useCallback((id: CardId) => {
-    setCardVisibility((current) => {
-      const next = { ...current, [id]: !current[id] };
-      saveCardVisibility(next);
-      return next;
-    });
-  }, []);
-
-  const resetCards = useCallback(() => {
-    setCardOrder(defaultCardOrder);
-    setCardVisibility(defaultCardVisibility);
-    saveCardOrder(defaultCardOrder);
-    saveCardVisibility(defaultCardVisibility);
-  }, []);
+  const [cardOrder] = useState<CardId[]>(() => loadCardOrder());
+  const [cardVisibility] = useState<Record<CardId, boolean>>(() => loadCardVisibility());
 
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
@@ -135,19 +107,16 @@ export function ControlCenter({
         clickThroughEnabled={clickThroughEnabled}
         onToggleClickThrough={toggleClickThrough}
         onScrollToUpdateCard={scrollToUpdateCard}
+        settingsMenu={
+          <button type="button" className="expand-button" data-tauri-drag-region="false" onClick={openSettings}>
+            设置
+          </button>
+        }
         onCollapse={onCollapse}
         onHeaderPointerDown={onHeaderPointerDown}
       />
 
       <section className="settings-panel">
-        <LayoutCard
-          cardOrder={cardOrder}
-          cardVisibility={cardVisibility}
-          onReset={resetCards}
-          onToggleCard={toggleCard}
-          onMoveCard={moveCard}
-        />
-
         {cardOrder.map((id) => (cardVisibility[id] ? <div key={`card-${id}`}>{renderers[id]()}</div> : null))}
       </section>
 

@@ -1,6 +1,7 @@
 import type React from "react";
 
 import type { ThemeId, UpdateState } from "../../types";
+import type { UpdatePollIntervalMinutes } from "../../config/settings";
 
 export type ControlCenterSnapshot = {
   cpu_usage: number;
@@ -62,6 +63,8 @@ export type ControlCenterProps = {
   theme: ThemeId;
   setTheme: (theme: ThemeId) => void;
   updateState: UpdateState;
+  updatePollIntervalMinutes: UpdatePollIntervalMinutes;
+  setUpdatePollIntervalMinutes: (next: UpdatePollIntervalMinutes) => void;
   onCheckOrInstallUpdate: () => void;
   onCollapse: () => void;
   onHeaderPointerDown: (event: React.PointerEvent<HTMLElement>) => void;

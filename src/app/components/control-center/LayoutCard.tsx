@@ -10,7 +10,7 @@ type LayoutCardProps = {
 
 export function LayoutCard({ cardOrder, cardVisibility, onReset, onToggleCard, onMoveCard }: LayoutCardProps) {
   return (
-    <article className="settings-card layout-card">
+    <article className="settings-card layout-card layout-card-embedded">
       <div className="settings-card-header">
         <div>
           <span className="settings-label">布局设置</span>

@@ -270,7 +270,21 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     }
 
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest("button")) {
+    if (
+      target instanceof HTMLElement &&
+      target.closest(
+        [
+          "button",
+          "a",
+          "input",
+          "select",
+          "textarea",
+          "[data-tauri-drag-region='false']",
+          ".settings-popover",
+          ".settings-menu",
+        ].join(","),
+      )
+    ) {
       return;
     }
 
