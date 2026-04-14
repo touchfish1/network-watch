@@ -15,10 +15,14 @@ mod sampler;
 mod state;
 mod tray;
 mod windowing;
+#[cfg(target_os = "windows")]
+mod windows_connections;
 
 use tauri::Manager;
 use diagnostics::get_runtime_diagnostics;
 use overlay::set_overlay_interactive;
+#[cfg(target_os = "windows")]
+use overlay::set_click_through_enabled;
 
 /// 启动并运行 Tauri 应用（后端主入口）。
 ///
@@ -41,7 +45,12 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
-        .invoke_handler(tauri::generate_handler![set_overlay_interactive, get_runtime_diagnostics])
+        .invoke_handler(tauri::generate_handler![
+            set_overlay_interactive,
+            get_runtime_diagnostics,
+            #[cfg(target_os = "windows")]
+            set_click_through_enabled
+        ])
         .setup(|app| {
             tray::build_tray(app)?;
             windowing::initialize_window(app.app_handle());

@@ -1,10 +1,11 @@
 import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { isTauri } from "@tauri-apps/api/core";
-import "./App.css";
+import "./app/styles/index.css";
 
 import {
   THEME_STORAGE_KEY,
+  CLICK_THROUGH_STORAGE_KEY,
 } from "./app/constants";
 import { ControlCenter } from "./app/components/ControlCenter";
 import { StatusStrip } from "./app/components/StatusStrip";
@@ -17,6 +18,7 @@ import { themeDefinitions } from "./app/themes";
 import {
   pushSample,
 } from "./app/utils";
+import { setClickThroughEnabled } from "./app/tauri";
 
 /**
  * 前端应用入口（单窗口悬浮窗）。
@@ -44,6 +46,7 @@ const emptySnapshot: SystemSnapshot = {
   process_count: 0,
   top_processes_cpu: [],
   top_processes_memory: [],
+  connections: null,
 };
 
 const emptyHistory: MetricHistory = {
@@ -146,6 +149,21 @@ function App() {
       window.clearInterval(timer);
     };
   }, [checkForUpdates, isTauriEnv]);
+
+  /**
+   * 启动时把“鼠标穿透”配置同步到后端（Windows）。\n+   * 由于开启后窗口不可点击，因此 UI 也提供托盘入口作为兜底关闭方式。
+   */
+  useEffect(() => {
+    if (!isTauriEnv) {
+      return;
+    }
+
+    const saved = window.localStorage.getItem(CLICK_THROUGH_STORAGE_KEY);
+    const enabled = saved === "1" || saved === "true";
+    void setClickThroughEnabled(enabled).catch(() => {
+      // ignore (non-windows or command unavailable)
+    });
+  }, [isTauriEnv]);
 
   const diagnosticsLabel = useMemo(() => {
     if (!diagnostics) {

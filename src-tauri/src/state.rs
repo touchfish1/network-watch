@@ -18,6 +18,11 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 /// - **读取方**：Windows topmost guard、窗口事件回调
 pub static OVERLAY_INTERACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// Windows：是否开启鼠标穿透（窗口不接收鼠标事件）。
+///
+/// - **写入方**：前端命令、托盘菜单\n+/// - **读取方**：overlay 应用函数/窗口事件回调（用于重申窗口样式）
+pub static CLICK_THROUGH_ENABLED: AtomicBool = AtomicBool::new(false);
+
 /// 采样线程 tick 计数（用于诊断“采样是否还在跑”）。
 pub static SAMPLER_TICK_COUNT: AtomicU64 = AtomicU64::new(0);
 
@@ -32,6 +37,16 @@ pub fn set_overlay_interactive(value: bool) {
 /// 读取 overlay 交互性（Relaxed）。
 pub fn overlay_interactive() -> bool {
     OVERLAY_INTERACTIVE.load(Ordering::Relaxed)
+}
+
+/// 设置鼠标穿透开关（Relaxed）。
+pub fn set_click_through_enabled(value: bool) {
+    CLICK_THROUGH_ENABLED.store(value, Ordering::Relaxed);
+}
+
+/// 读取鼠标穿透开关（Relaxed）。
+pub fn click_through_enabled() -> bool {
+    CLICK_THROUGH_ENABLED.load(Ordering::Relaxed)
 }
 
 /// 记录一次系统快照的发出（用于运行时诊断）。

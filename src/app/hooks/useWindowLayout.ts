@@ -1,24 +1,19 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
-import { LogicalSize, PhysicalPosition, getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
+import { LogicalSize, getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 import {
-  CLICK_DRAG_THRESHOLD,
-  COLLAPSED_WIDTH_STORAGE_KEY,
-  EXPANDED_EDGE_GAP,
-  EXPANDED_SIZE_STORAGE_KEY,
   FALLBACK_COLLAPSED_HEIGHT,
-  FALLBACK_COLLAPSED_WIDTH,
-  MAX_COLLAPSED_WIDTH,
-  MIN_COLLAPSED_WIDTH,
-  MIN_EXPANDED_HEIGHT,
-  MIN_EXPANDED_WIDTH,
   POSITION_SETTLE_DELAY,
 } from "../constants";
 import type { ExpansionDirection, MetricHistory, SystemSnapshot } from "../types";
-import { clamp, getAnchoredExpandedPosition, getDefaultExpandedSize, getDockedPosition, getTaskbarThickness } from "../utils";
+import { getAnchoredExpandedPosition, getDockedPosition, getTaskbarThickness } from "../utils";
 import { setOverlayInteractive } from "../tauri";
+import { loadCollapsedWidth, loadExpandedSize, saveCollapsedWidth, saveExpandedSize } from "./window-layout/storage";
+import { useCollapsedClickDrag } from "./window-layout/useCollapsedClickDrag";
+import { applyWindowLayoutSafely } from "./window-layout/applyWindowLayoutSafely";
+import { useResizeHandlers } from "./window-layout/useResizeHandlers";
 
 /**
  * 管理悬浮窗窗口布局与交互（收起/展开、拖拽、缩放、贴边、尺寸持久化、事件订阅）。
@@ -41,32 +36,8 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const [expanded, setExpanded] = useState(false);
   const [expansionDirection, setExpansionDirection] = useState<ExpansionDirection>("down");
   const [collapsedHeight, setCollapsedHeight] = useState(FALLBACK_COLLAPSED_HEIGHT);
-  const [collapsedWidth, setCollapsedWidth] = useState(() => {
-    const saved = window.localStorage.getItem(COLLAPSED_WIDTH_STORAGE_KEY);
-    const parsed = saved ? Number(saved) : NaN;
-    if (!Number.isFinite(parsed)) {
-      return FALLBACK_COLLAPSED_WIDTH;
-    }
-    return clamp(parsed, MIN_COLLAPSED_WIDTH, MAX_COLLAPSED_WIDTH);
-  });
-  const [expandedSize, setExpandedSize] = useState(() => {
-    const saved = window.localStorage.getItem(EXPANDED_SIZE_STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as { width?: unknown; height?: unknown };
-        const defaults = getDefaultExpandedSize();
-        const width = typeof parsed.width === "number" ? parsed.width : defaults.width;
-        const height = typeof parsed.height === "number" ? parsed.height : defaults.height;
-        return {
-          width: clamp(width, MIN_EXPANDED_WIDTH, Number.POSITIVE_INFINITY),
-          height: clamp(height, MIN_EXPANDED_HEIGHT, Number.POSITIVE_INFINITY),
-        };
-      } catch {
-        // ignore
-      }
-    }
-    return getDefaultExpandedSize();
-  });
+  const [collapsedWidth, setCollapsedWidth] = useState(() => loadCollapsedWidth());
+  const [expandedSize, setExpandedSize] = useState(() => loadExpandedSize());
 
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
   const [history, setHistory] = useState<MetricHistory>(emptyHistory);
@@ -74,8 +45,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const snapTimerRef = useRef<number | null>(null);
   const isProgrammaticLayoutRef = useRef(false);
   const statusTextRef = useRef<HTMLDivElement | null>(null);
-  const collapsedPointerRef = useRef<{ x: number; y: number } | null>(null);
-  const collapsedDraggingRef = useRef(false);
+  // 收起态“点击切换 / 拖拽移动”交互由子 hook 管理
 
   /**
    * 根据当前显示器的 taskbar/dock 厚度同步收起态高度，并在收起态时立即应用窗口尺寸。
@@ -104,20 +74,10 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     }
   });
 
-  const applyWindowLayoutSafely = useCallback(
+  const applyLayoutSafely = useCallback(
     async (nextLayout: { width: number; height: number; x: number; y: number }) => {
-      if (!appWindow) {
-        return;
-      }
-      isProgrammaticLayoutRef.current = true;
-      try {
-        await appWindow.setSize(new LogicalSize(nextLayout.width, nextLayout.height));
-        await appWindow.setPosition(new PhysicalPosition(nextLayout.x, nextLayout.y));
-      } finally {
-        window.setTimeout(() => {
-          isProgrammaticLayoutRef.current = false;
-        }, POSITION_SETTLE_DELAY);
-      }
+      if (!appWindow) return;
+      await applyWindowLayoutSafely(appWindow, nextLayout, isProgrammaticLayoutRef);
     },
     [appWindow],
   );
@@ -140,13 +100,13 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       return;
     }
 
-    await applyWindowLayoutSafely({
+    await applyLayoutSafely({
       width: size.width,
       height: size.height,
       x: snappedPosition.x,
       y: snappedPosition.y,
     });
-  }, [appWindow, applyWindowLayoutSafely]);
+  }, [appWindow, applyLayoutSafely]);
 
   /**
    * 接收来自后端的系统快照，并同步到 state，同时把 payload 透传给调用方以更新历史曲线。
@@ -215,11 +175,11 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   }, [appWindow, handleSnapshot, snapToWorkAreaEdge, syncCollapsedHeight]);
 
   useEffect(() => {
-    window.localStorage.setItem(COLLAPSED_WIDTH_STORAGE_KEY, String(collapsedWidth));
+    saveCollapsedWidth(collapsedWidth);
   }, [collapsedWidth]);
 
   useEffect(() => {
-    window.localStorage.setItem(EXPANDED_SIZE_STORAGE_KEY, JSON.stringify(expandedSize));
+    saveExpandedSize(expandedSize);
   }, [expandedSize]);
 
   useEffect(() => {
@@ -277,7 +237,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       setExpansionDirection(expansionPlan.direction as ExpansionDirection);
     }
 
-    await applyWindowLayoutSafely({
+    await applyLayoutSafely({
       width: nextWidth,
       height: nextHeight,
       x: expansionPlan.position.x,
@@ -290,79 +250,15 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     }
   };
 
-  const handleCollapsedResizeStart = async (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!appWindow || expanded || event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const startX = event.clientX;
-    const startWidth = collapsedWidth;
-
-    const onMove = (moveEvent: PointerEvent) => {
-      const delta = moveEvent.clientX - startX;
-      setCollapsedWidth(clamp(startWidth + delta, MIN_COLLAPSED_WIDTH, MAX_COLLAPSED_WIDTH));
-    };
-
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp, { once: true });
-  };
-
-  const handleExpandedResizeStart = async (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!appWindow || !expanded || event.button !== 0) {
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-
-    const startX = event.clientX;
-    const startY = event.clientY;
-    const startSize = { ...expandedSize };
-
-    const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
-    const centerX = position.x + size.width / 2;
-    const centerY = position.y + size.height / 2;
-    const monitor = await monitorFromPoint(centerX, centerY);
-    const workAreaWidth = monitor?.workArea.size.width ?? 99999;
-    const workAreaHeight = monitor?.workArea.size.height ?? 99999;
-    const maxExpandedWidth = Math.max(MIN_EXPANDED_WIDTH, workAreaWidth - EXPANDED_EDGE_GAP * 2);
-    const maxExpandedHeight = Math.max(MIN_EXPANDED_HEIGHT, workAreaHeight - EXPANDED_EDGE_GAP * 2);
-
-    const onMove = (moveEvent: PointerEvent) => {
-      const deltaX = moveEvent.clientX - startX;
-      const deltaY = moveEvent.clientY - startY;
-      const nextWidth = clamp(startSize.width + deltaX, MIN_EXPANDED_WIDTH, maxExpandedWidth);
-      const nextHeight = clamp(startSize.height + deltaY, MIN_EXPANDED_HEIGHT, maxExpandedHeight);
-      setExpandedSize({
-        width: nextWidth,
-        height: nextHeight,
-      });
-      isProgrammaticLayoutRef.current = true;
-      void appWindow
-        .setSize(new LogicalSize(nextWidth, nextHeight))
-        .finally(() => {
-          window.setTimeout(() => {
-            isProgrammaticLayoutRef.current = false;
-          }, POSITION_SETTLE_DELAY);
-        });
-    };
-
-    const onUp = () => {
-      window.removeEventListener("pointermove", onMove);
-      window.removeEventListener("pointerup", onUp);
-    };
-
-    window.addEventListener("pointermove", onMove);
-    window.addEventListener("pointerup", onUp, { once: true });
-  };
+  const { handleCollapsedResizeStart, handleExpandedResizeStart } = useResizeHandlers({
+    appWindow,
+    expanded,
+    collapsedWidth,
+    setCollapsedWidth,
+    expandedSize,
+    setExpandedSize,
+    isProgrammaticLayoutRef,
+  });
 
   const handleDragStart = async (event: React.PointerEvent<HTMLElement>) => {
     if (!appWindow) {
@@ -382,62 +278,12 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     await appWindow.startDragging();
   };
 
-  const handleCollapsedPointerDown = (event: React.PointerEvent<HTMLElement>) => {
-    if (!appWindow) {
-      return;
-    }
-
-    if (event.button !== 0) {
-      return;
-    }
-
-    collapsedPointerRef.current = { x: event.clientX, y: event.clientY };
-    collapsedDraggingRef.current = false;
-  };
-
-  const handleCollapsedPointerMove = async (event: React.PointerEvent<HTMLElement>) => {
-    if (!appWindow) {
-      return;
-    }
-
-    if (expanded) {
-      return;
-    }
-
-    if (expanded || collapsedDraggingRef.current || !collapsedPointerRef.current) {
-      return;
-    }
-
-    const deltaX = Math.abs(event.clientX - collapsedPointerRef.current.x);
-    const deltaY = Math.abs(event.clientY - collapsedPointerRef.current.y);
-    if (Math.max(deltaX, deltaY) < CLICK_DRAG_THRESHOLD) {
-      return;
-    }
-
-    collapsedDraggingRef.current = true;
-    event.preventDefault();
-    await appWindow.startDragging();
-  };
-
-  const handleCollapsedPointerUp = async () => {
-    if (!appWindow) {
-      setExpanded((current) => !current);
-      return;
-    }
-
-    const wasDragging = collapsedDraggingRef.current;
-    collapsedPointerRef.current = null;
-    collapsedDraggingRef.current = false;
-
-    if (!wasDragging) {
-      await toggleExpanded();
-    }
-  };
-
-  const resetCollapsedPointer = () => {
-    collapsedPointerRef.current = null;
-    collapsedDraggingRef.current = false;
-  };
+  const { handleCollapsedPointerDown, handleCollapsedPointerMove, handleCollapsedPointerUp, resetCollapsedPointer } =
+    useCollapsedClickDrag({
+      appWindow,
+      expanded,
+      onToggleExpanded: toggleExpanded,
+    });
 
   return {
     appWindow,

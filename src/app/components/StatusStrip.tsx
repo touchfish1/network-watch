@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import type React from "react";
 
 import { formatCompactRate, formatMemoryUsage, formatPercent } from "../utils";
 import type { SystemSnapshot } from "../types";
+import { loadStatusVisibility } from "../config/uiLayout";
 
 /**
  * 收起态状态条（悬浮窗最小形态）。
@@ -34,6 +36,7 @@ export function StatusStrip({
   onResizeHandlePointerDown,
   snapshot,
 }: StatusStripProps) {
+  const statusVisibility = useMemo(() => loadStatusVisibility(), []);
   return (
     <div
       className={`status-strip ${expanded ? "status-strip-expanded" : ""}`}
@@ -45,12 +48,24 @@ export function StatusStrip({
     >
       <div ref={statusTextRef} className="status-text-block">
         <div className="status-line">
-          <span>CPU {formatPercent(snapshot.cpu_usage)}</span>
-          <span>MEM {formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</span>
+          {statusVisibility.cpu ? <span>CPU {formatPercent(snapshot.cpu_usage)}</span> : null}
+          {statusVisibility.mem ? <span>MEM {formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</span> : null}
+          {statusVisibility.connections ? (
+            <span>CONN {snapshot.connections ? snapshot.connections.total : "--"}</span>
+          ) : null}
         </div>
         <div className="status-line status-line-secondary">
-          <span>DOWN {formatCompactRate(snapshot.network_download)}</span>
-          <span>UP {formatCompactRate(snapshot.network_upload)}</span>
+          {statusVisibility.down ? <span>DOWN {formatCompactRate(snapshot.network_download)}</span> : null}
+          {statusVisibility.up ? <span>UP {formatCompactRate(snapshot.network_upload)}</span> : null}
+          {statusVisibility.active_nic ? <span>NIC {snapshot.active_nic_id ?? "--"}</span> : null}
+          {statusVisibility.disk ? (
+            <span>
+              DISK{" "}
+              {snapshot.system_disk
+                ? formatPercent((1 - snapshot.system_disk.available_bytes / snapshot.system_disk.total_bytes) * 100)
+                : "--"}
+            </span>
+          ) : null}
         </div>
       </div>
       {!expanded ? (

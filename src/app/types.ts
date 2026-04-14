@@ -42,6 +42,16 @@ export type SystemSnapshot = {
     cpu_usage: number;
     memory_used: number;
   }>;
+  /**
+   * Windows：连接总数与状态分布；其它平台为 null。
+   */
+  connections: {
+    total: number;
+    by_state: Array<{
+      state: string;
+      count: number;
+    }>;
+  } | null;
 };
 
 /**

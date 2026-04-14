@@ -9,7 +9,7 @@
 //! - 窗口显示/隐藏由 `windowing` 模块统一处理
 
 use tauri::{
-    AppHandle,
+    AppHandle, Manager,
     menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -17,6 +17,8 @@ use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
 use crate::{constants, windowing};
+#[cfg(target_os = "windows")]
+use crate::{overlay, state};
 
 /// 创建托盘与菜单，并绑定事件处理。
 ///
@@ -29,23 +31,46 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .checked(autostart_checked)
         .build(app)?;
 
-    let menu = MenuBuilder::new(app)
+    #[cfg(target_os = "windows")]
+    let click_through_item = CheckMenuItemBuilder::new("鼠标穿透")
+        .id(constants::MENU_CLICK_THROUGH)
+        .checked(state::click_through_enabled())
+        .build(app)?;
+
+    let mut menu_builder = MenuBuilder::new(app)
         .item(
             &MenuItemBuilder::new("显示 / 隐藏")
                 .id(constants::MENU_TOGGLE_WINDOW)
                 .build(app)?,
         )
-        .item(&autostart_item)
+        .item(&autostart_item);
+
+    #[cfg(target_os = "windows")]
+    {
+        menu_builder = menu_builder.item(&click_through_item);
+    }
+
+    let menu = menu_builder
         .separator()
         .item(&MenuItemBuilder::new("退出").id(constants::MENU_QUIT).build(app)?)
         .build()?;
 
     let autostart_item_handle = autostart_item.clone();
+    #[cfg(target_os = "windows")]
+    let click_through_item_handle = click_through_item.clone();
     let mut tray_builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("Network Watch")
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| handle_menu_event(app, event, &autostart_item_handle))
+        .on_menu_event(move |app, event| {
+            handle_menu_event(
+                app,
+                event,
+                &autostart_item_handle,
+                #[cfg(target_os = "windows")]
+                &click_through_item_handle,
+            )
+        })
         .on_tray_icon_event(|tray, event| handle_tray_event(tray.app_handle(), event));
 
     if let Some(icon) = app.default_window_icon() {
@@ -73,16 +98,30 @@ fn handle_menu_event<R: tauri::Runtime>(
     app: &AppHandle<R>,
     event: MenuEvent,
     autostart_item: &CheckMenuItem<R>,
+    #[cfg(target_os = "windows")] click_through_item: &CheckMenuItem<R>,
 ) {
     match event.id.as_ref() {
         constants::MENU_TOGGLE_WINDOW => windowing::toggle_window(app),
         constants::MENU_AUTOSTART => toggle_autostart(app, autostart_item),
+        #[cfg(target_os = "windows")]
+        constants::MENU_CLICK_THROUGH => toggle_click_through(app, click_through_item),
         constants::MENU_QUIT => {
             let _ = app.save_window_state(StateFlags::all());
             app.exit(0);
         }
         _ => {}
     }
+}
+
+#[cfg(target_os = "windows")]
+fn toggle_click_through<R: tauri::Runtime>(app: &AppHandle<R>, click_through_item: &CheckMenuItem<R>) {
+    let enabled = state::click_through_enabled();
+    let next_enabled = !enabled;
+    state::set_click_through_enabled(next_enabled);
+    if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
+        overlay::apply_overlay_mode(&window, state::overlay_interactive());
+    }
+    let _ = click_through_item.set_checked(next_enabled);
 }
 
 /// 切换开机启动，并同步菜单勾选状态。

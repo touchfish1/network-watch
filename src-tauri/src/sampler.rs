@@ -25,6 +25,9 @@ use tauri::{AppHandle, Emitter};
 
 use crate::{constants, state};
 
+#[cfg(target_os = "windows")]
+use crate::windows_connections::ConnectionsSnapshot;
+
 /// 进程快照（用于 Top 列表展示）。
 ///
 /// 字段单位：
@@ -115,6 +118,8 @@ pub struct SystemSnapshot {
     pub top_processes_cpu: Vec<ProcessSnapshot>,
     /// 内存占用 Top N 进程（N=5）。
     pub top_processes_memory: Vec<ProcessSnapshot>,
+    /// Windows：连接总数与状态分布（非 Windows 为 `None`）。
+    pub connections: Option<ConnectionsSnapshot>,
 }
 
 /// 启动采样线程。
@@ -248,6 +253,10 @@ pub fn start_sampler(app: AppHandle) {
                 process_count,
                 top_processes_cpu,
                 top_processes_memory,
+                #[cfg(target_os = "windows")]
+                connections: crate::windows_connections::get_connections_snapshot(),
+                #[cfg(not(target_os = "windows"))]
+                connections: None,
             };
 
             state::record_snapshot(snapshot.timestamp);

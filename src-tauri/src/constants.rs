@@ -11,6 +11,8 @@ pub const EVENT_SYSTEM_SNAPSHOT: &str = "system-snapshot";
 pub const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 /// 托盘菜单：开机启动开关。
 pub const MENU_AUTOSTART: &str = "toggle-autostart";
+/// 托盘菜单：鼠标穿透开关（Windows）。
+pub const MENU_CLICK_THROUGH: &str = "toggle-click-through";
 /// 托盘菜单：退出应用（会先尝试保存窗口状态）。
 pub const MENU_QUIT: &str = "quit";
 

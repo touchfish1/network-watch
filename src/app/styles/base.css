@@ -1,0 +1,13 @@
+:root {
+  color: rgba(236, 243, 255, 0.96);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+select {
+  font: inherit;
+}
+

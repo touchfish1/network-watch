@@ -1,0 +1,30 @@
+.resize-handle {
+  position: absolute;
+  z-index: 10;
+  background: transparent;
+}
+
+.resize-handle-collapsed {
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+}
+
+.resize-handle-expanded {
+  right: 8px;
+  bottom: 8px;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  border-right: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-bottom: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.resize-handle-expanded:hover {
+  opacity: 1;
+}
+

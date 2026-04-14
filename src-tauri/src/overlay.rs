@@ -18,7 +18,8 @@ use crate::{constants, state};
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    GWL_EXSTYLE, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    WS_EX_LAYERED, WS_EX_TRANSPARENT, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos,
 };
 
 /// Windows：强制将窗口提升到 topmost 层级（不激活窗口）。
@@ -58,6 +59,31 @@ pub fn apply_overlay_mode<R: Runtime>(window: &tauri::WebviewWindow<R>, _interac
     let _ = window.set_visible_on_all_workspaces(true);
     #[cfg(target_os = "windows")]
     force_windows_topmost(window);
+    #[cfg(target_os = "windows")]
+    apply_click_through(window, state::click_through_enabled());
+}
+
+/// Windows：应用鼠标穿透窗口样式。
+///
+/// 通过 `WS_EX_TRANSPARENT` 让窗口“穿透鼠标”，并保持 `WS_EX_LAYERED`（透明窗口常见组合）。
+#[cfg(target_os = "windows")]
+fn apply_click_through<R: Runtime>(window: &tauri::WebviewWindow<R>, enabled: bool) {
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            let ex_style = GetWindowLongPtrW(hwnd.0 as _, GWL_EXSTYLE) as isize;
+            let mut next = ex_style;
+
+            if enabled {
+                next |= (WS_EX_TRANSPARENT as isize) | (WS_EX_LAYERED as isize);
+            } else {
+                next &= !(WS_EX_TRANSPARENT as isize);
+            }
+
+            if next != ex_style {
+                let _ = SetWindowLongPtrW(hwnd.0 as _, GWL_EXSTYLE, next);
+            }
+        }
+    }
 }
 
 /// Windows：topmost 置顶守护线程。
@@ -97,4 +123,18 @@ pub fn set_overlay_interactive<R: Runtime>(
 
     Ok(())
 }
+
+/// 设置鼠标穿透开关（Windows）。
+///
+/// 返回值为最终状态，便于前端与托盘 UI 同步。
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn set_click_through_enabled<R: Runtime>(app: tauri::AppHandle<R>, enabled: bool) -> tauri::Result<bool> {
+    state::set_click_through_enabled(enabled);
+    if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
+        apply_overlay_mode(&window, state::overlay_interactive());
+    }
+    Ok(state::click_through_enabled())
+}
+
 

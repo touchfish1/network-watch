@@ -24,6 +24,7 @@ export const CLICK_DRAG_THRESHOLD = 6;
 export const THEME_STORAGE_KEY = "network-watch-theme";
 export const COLLAPSED_WIDTH_STORAGE_KEY = "network-watch-collapsed-width";
 export const EXPANDED_SIZE_STORAGE_KEY = "network-watch-expanded-size";
+export const CLICK_THROUGH_STORAGE_KEY = "network-watch-click-through";
 
 export const MIN_EXPANDED_WIDTH = 300;
 export const MIN_EXPANDED_HEIGHT = 420;

@@ -19,3 +19,12 @@ export async function getRuntimeDiagnostics() {
   return await invoke<RuntimeDiagnostics>("get_runtime_diagnostics");
 }
 
+/**
+ * Windows：切换鼠标穿透（开启后窗口不再吃鼠标点击）。
+ *
+ * 返回值为最终状态，便于 UI 与托盘同步。
+ */
+export async function setClickThroughEnabled(enabled: boolean) {
+  return await invoke<boolean>("set_click_through_enabled", { enabled });
+}
+

@@ -1,0 +1,198 @@
+.shell {
+  --text-primary: rgba(246, 248, 255, 0.96);
+  --text-muted: rgba(209, 219, 242, 0.78);
+  --text-soft: rgba(163, 184, 220, 0.82);
+  --border: rgba(255, 255, 255, 0.1);
+  --panel: rgba(255, 255, 255, 0.08);
+  --panel-strong: rgba(255, 255, 255, 0.11);
+  --panel-soft: rgba(255, 255, 255, 0.06);
+  --widget-bg-start: rgba(7, 13, 24, 0.96);
+  --widget-bg-end: rgba(10, 18, 31, 0.93);
+  --glow-a: rgba(54, 208, 255, 0.26);
+  --glow-b: rgba(255, 74, 211, 0.22);
+  --shadow: rgba(3, 8, 18, 0.32);
+  --accent: #54efff;
+  --accent-strong: #ff4fd8;
+  --accent-soft: rgba(84, 239, 255, 0.18);
+  --button-bg: linear-gradient(135deg, rgba(84, 239, 255, 0.28), rgba(255, 79, 216, 0.24));
+  --button-border: rgba(255, 255, 255, 0.16);
+  --button-text: #f9fbff;
+  --theme-ring: rgba(84, 239, 255, 0.44);
+  --cpu: #7bc4ff;
+  --memory: #bba6ff;
+  --download: #47e5bc;
+  --upload: #ffb55c;
+  --font-main: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --font-display: "Bahnschrift", "Segoe UI", sans-serif;
+  display: inline-block;
+  padding: 0;
+  color: var(--text-primary);
+  font-family: var(--font-main);
+  background: transparent;
+}
+
+.shell-expanded {
+  display: block;
+  width: 100%;
+  height: 100vh;
+}
+
+.theme-cyberpunk {
+  --widget-bg-start: rgba(7, 11, 31, 0.97);
+  --widget-bg-end: rgba(13, 7, 28, 0.95);
+  --glow-a: rgba(53, 242, 255, 0.28);
+  --glow-b: rgba(255, 79, 216, 0.28);
+  --accent: #35f2ff;
+  --accent-strong: #ff4fd8;
+  --button-bg: linear-gradient(135deg, rgba(53, 242, 255, 0.28), rgba(255, 79, 216, 0.26));
+  --theme-ring: rgba(53, 242, 255, 0.48);
+  --font-display: "Orbitron", "Bahnschrift", sans-serif;
+}
+
+.theme-japanese {
+  --text-primary: rgba(38, 30, 20, 0.92);
+  --text-muted: rgba(78, 60, 43, 0.8);
+  --text-soft: rgba(93, 74, 56, 0.78);
+  --border: rgba(80, 61, 47, 0.18);
+  --panel: rgba(255, 250, 241, 0.5);
+  --panel-strong: rgba(255, 248, 235, 0.68);
+  --panel-soft: rgba(255, 250, 241, 0.42);
+  --widget-bg-start: rgba(243, 234, 216, 0.98);
+  --widget-bg-end: rgba(228, 214, 191, 0.96);
+  --glow-a: rgba(34, 58, 94, 0.16);
+  --glow-b: rgba(194, 75, 60, 0.18);
+  --shadow: rgba(86, 59, 35, 0.22);
+  --accent: #223a5e;
+  --accent-strong: #c24b3c;
+  --accent-soft: rgba(34, 58, 94, 0.1);
+  --button-bg: linear-gradient(135deg, rgba(34, 58, 94, 0.18), rgba(194, 75, 60, 0.16));
+  --button-border: rgba(80, 61, 47, 0.18);
+  --button-text: #251c13;
+  --theme-ring: rgba(194, 75, 60, 0.36);
+  --cpu: #223a5e;
+  --memory: #7f4d7f;
+  --download: #538e77;
+  --upload: #c9773c;
+  --font-main: "Yu Gothic UI", "Hiragino Sans GB", sans-serif;
+  --font-display: "Yu Mincho", "Microsoft YaHei UI", serif;
+}
+
+.theme-chinese {
+  --text-primary: rgba(252, 244, 232, 0.96);
+  --text-muted: rgba(234, 220, 197, 0.78);
+  --text-soft: rgba(194, 210, 198, 0.82);
+  --border: rgba(216, 171, 79, 0.18);
+  --panel: rgba(255, 255, 255, 0.05);
+  --panel-strong: rgba(255, 255, 255, 0.08);
+  --panel-soft: rgba(255, 255, 255, 0.04);
+  --widget-bg-start: rgba(31, 24, 22, 0.98);
+  --widget-bg-end: rgba(78, 28, 26, 0.96);
+  --glow-a: rgba(47, 143, 131, 0.18);
+  --glow-b: rgba(216, 171, 79, 0.2);
+  --shadow: rgba(20, 13, 11, 0.34);
+  --accent: #d8ab4f;
+  --accent-strong: #b6413c;
+  --accent-soft: rgba(216, 171, 79, 0.12);
+  --button-bg: linear-gradient(135deg, rgba(182, 65, 60, 0.26), rgba(216, 171, 79, 0.22));
+  --button-border: rgba(216, 171, 79, 0.18);
+  --button-text: #fff7e6;
+  --theme-ring: rgba(216, 171, 79, 0.34);
+  --cpu: #d8ab4f;
+  --memory: #e685a7;
+  --download: #4dc4ae;
+  --upload: #ff9f6b;
+  --font-main: "Microsoft YaHei UI", "Noto Serif SC", sans-serif;
+  --font-display: "STZhongsong", "SimSun", serif;
+}
+
+.theme-western {
+  --text-primary: rgba(245, 236, 223, 0.95);
+  --text-muted: rgba(212, 196, 176, 0.78);
+  --text-soft: rgba(204, 180, 146, 0.82);
+  --border: rgba(214, 179, 106, 0.16);
+  --panel: rgba(255, 255, 255, 0.05);
+  --panel-strong: rgba(255, 255, 255, 0.08);
+  --panel-soft: rgba(255, 255, 255, 0.04);
+  --widget-bg-start: rgba(24, 31, 44, 0.98);
+  --widget-bg-end: rgba(76, 48, 33, 0.96);
+  --glow-a: rgba(28, 50, 84, 0.24);
+  --glow-b: rgba(214, 179, 106, 0.18);
+  --shadow: rgba(18, 11, 8, 0.36);
+  --accent: #d6b36a;
+  --accent-strong: #8c5a3c;
+  --accent-soft: rgba(214, 179, 106, 0.12);
+  --button-bg: linear-gradient(135deg, rgba(214, 179, 106, 0.24), rgba(140, 90, 60, 0.24));
+  --button-border: rgba(214, 179, 106, 0.14);
+  --button-text: #fff8ef;
+  --theme-ring: rgba(214, 179, 106, 0.32);
+  --cpu: #85b3ff;
+  --memory: #d9b6ff;
+  --download: #7fd0bb;
+  --upload: #f5bb7f;
+  --font-main: "Aptos", "Segoe UI", sans-serif;
+  --font-display: "Georgia", "Times New Roman", serif;
+}
+
+.widget {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
+  box-shadow:
+    0 20px 42px var(--shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(18px);
+}
+
+.shell-expanded .widget {
+  width: 100%;
+  height: 100vh;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
+  box-shadow:
+    0 20px 42px var(--shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  backdrop-filter: blur(18px);
+}
+
+.shell:not(.shell-expanded) .widget {
+  overflow: visible;
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.widget-expand-down .status-strip {
+  order: 1;
+}
+
+.widget-expand-down .expanded-panel {
+  order: 2;
+}
+
+.widget-expand-up .expanded-panel {
+  order: 1;
+}
+
+.widget-expand-up .status-strip {
+  order: 2;
+}
+
+.widget-header,
+.status-strip,
+.expanded-panel,
+.settings-panel,
+.stats-grid,
+.details,
+.widget-footer {
+  position: relative;
+  z-index: 1;
+}
+
