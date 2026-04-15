@@ -283,6 +283,32 @@
   gap: 8px;
 }
 
+.host-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pin-button {
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  border: 1px solid var(--button-border);
+  background: var(--button-bg);
+  color: var(--button-text);
+  cursor: pointer;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pin-button-on {
+  box-shadow: 0 0 0 1px var(--theme-ring), 0 10px 24px var(--accent-soft);
+  color: color-mix(in srgb, var(--accent) 88%, white);
+}
+
 .host-status-pill {
   display: inline-flex;
   align-items: center;

@@ -2,15 +2,32 @@ import { useMemo, useState } from "react";
 import { formatMemoryUsage, formatPercent, formatRate, formatUptimeSeconds } from "../../utils";
 import type { OnlineMachine } from "../../types";
 
-type OnlineHostsCardProps = {
+export type OnlineHostsCardProps = {
   machines: OnlineMachine[];
   selectedMachineId: string | null;
   onSelectMachine: (machineId: string) => void;
   staleThresholdMs: number;
+  pinnedMachineIds: string[];
+  onTogglePinned: (machineId: string) => void;
+  events: Array<{
+    timestamp: number;
+    type: "online" | "offline";
+    machineId: string;
+    label: string;
+  }>;
 };
 
-export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine, staleThresholdMs }: OnlineHostsCardProps) {
+export function OnlineHostsCard({
+  machines,
+  selectedMachineId,
+  onSelectMachine,
+  staleThresholdMs,
+  pinnedMachineIds,
+  onTogglePinned,
+  events,
+}: OnlineHostsCardProps) {
   const [query, setQuery] = useState("");
+  const [onlyPinned, setOnlyPinned] = useState(false);
 
   const now = Date.now();
   const normalizedQuery = query.trim().toLowerCase();
@@ -27,8 +44,20 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine, 
     });
   }, [machines, normalizedQuery]);
 
+  const pinnedSet = useMemo(() => new Set(pinnedMachineIds), [pinnedMachineIds]);
+  const displayMachines = useMemo(() => {
+    const base = onlyPinned ? filteredMachines.filter((m) => pinnedSet.has(m.machine_id)) : filteredMachines;
+    // 置顶排序：pin 在前，其他保持 received_at_ms 降序（后端已排好，这里只做稳定处理）
+    return [...base].sort((a, b) => {
+      const ap = pinnedSet.has(a.machine_id) ? 1 : 0;
+      const bp = pinnedSet.has(b.machine_id) ? 1 : 0;
+      if (ap !== bp) return bp - ap;
+      return (b.received_at_ms ?? 0) - (a.received_at_ms ?? 0);
+    });
+  }, [filteredMachines, onlyPinned, pinnedSet]);
+
   const selectedMachine =
-    filteredMachines.find((item) => item.machine_id === selectedMachineId) ?? filteredMachines[0] ?? null;
+    displayMachines.find((item) => item.machine_id === selectedMachineId) ?? displayMachines[0] ?? null;
   const selectedLabel = selectedMachine?.label ?? selectedMachine?.host_name ?? selectedMachine?.machine_id ?? null;
   const selectedSnapshot = selectedMachine?.snapshot ?? null;
   const cpuUsage = typeof selectedSnapshot?.cpu_usage === "number" ? selectedSnapshot.cpu_usage : 0;
@@ -66,7 +95,7 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine, 
             {machines.length > 0 ? `已发现 ${machines.length} 台` : "暂无在线主机"}
             {normalizedQuery ? (
               <span className="muted" style={{ marginLeft: 8 }}>
-                （匹配 {filteredMachines.length}）
+                （匹配 {displayMachines.length}）
               </span>
             ) : null}
           </strong>
@@ -94,24 +123,44 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine, 
                   清空
                 </button>
               ) : null}
+              <button
+                type="button"
+                className={`settings-option ${onlyPinned ? "settings-option-active" : ""}`}
+                onClick={() => setOnlyPinned((v) => !v)}
+                title="只显示关注(置顶)的主机"
+              >
+                只看关注
+              </button>
             </div>
-            {filteredMachines.length === 0 ? (
+            {displayMachines.length === 0 ? (
               <div className="kv-row">
                 <span className="kv-key">无匹配主机</span>
                 <span className="kv-value">—</span>
               </div>
-            ) : filteredMachines.length === 1 ? null : (
+            ) : displayMachines.length === 1 ? null : (
               <div className="online-host-switcher">
-                {filteredMachines.map((item) => (
-                  <button
-                    key={item.machine_id}
-                    type="button"
-                    className={`settings-option ${selectedMachine?.machine_id === item.machine_id ? "settings-option-active" : ""}`}
-                    onClick={() => onSelectMachine(item.machine_id)}
-                  >
-                    {item.label ?? item.host_name ?? item.machine_id}
-                  </button>
-                ))}
+                {displayMachines.map((item) => {
+                  const pinned = pinnedSet.has(item.machine_id);
+                  return (
+                    <div key={item.machine_id} className="host-pill">
+                      <button
+                        type="button"
+                        className={`pin-button ${pinned ? "pin-button-on" : ""}`}
+                        title={pinned ? "取消关注" : "关注/置顶"}
+                        onClick={() => onTogglePinned(item.machine_id)}
+                      >
+                        {pinned ? "★" : "☆"}
+                      </button>
+                      <button
+                        type="button"
+                        className={`settings-option ${selectedMachine?.machine_id === item.machine_id ? "settings-option-active" : ""}`}
+                        onClick={() => onSelectMachine(item.machine_id)}
+                      >
+                        {item.label ?? item.host_name ?? item.machine_id}
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </>
@@ -161,6 +210,12 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine, 
             <span className="kv-key">运行时长 / 进程</span>
             <span className="kv-value">
               {formatUptimeSeconds(uptimeSeconds)} / {processCount}
+            </span>
+          </div>
+          <div className="kv-row">
+            <span className="kv-key">事件</span>
+            <span className="kv-value muted" style={{ fontWeight: 600 }}>
+              {events.length ? `${events[0].type === "online" ? "上线" : "离线"} · ${new Date(events[0].timestamp).toLocaleTimeString()}` : "—"}
             </span>
           </div>
         </div>

@@ -46,6 +46,8 @@
     .pill-stale { color: rgba(255,190,92,0.95); }
     tr.row-stale td { background: rgba(255,190,92,0.06); }
     .mini-number { width: 96px; text-align: right; }
+    .pin { width: 26px; height: 26px; border-radius: 999px; border: 1px solid var(--border); background: rgba(0,0,0,0.18); color: rgba(255,255,255,0.9); cursor: pointer; }
+    .pin-on { color: rgba(56,189,248,0.95); box-shadow: 0 0 0 1px rgba(56,189,248,0.28); }
     .chart-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
     .chart-card { background: rgba(0,0,0,0.18); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
     .chart-head { display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom: 8px; }
@@ -122,6 +124,7 @@
       <div class="filter-row">
         <input id="cluster_filter" class="filter-input" placeholder="搜索：label / 主机名 / IP / machine_id" />
         <input id="cluster_stale_secs" class="filter-input mini-number" type="number" min="2" max="600" step="1" placeholder="离线(s)" />
+        <button id="cluster_only_pinned" class="pin" title="只看关注">☆</button>
         <span class="badge" id="cluster_filter_count">—</span>
       </div>
       <div style="margin-top:10px; overflow:auto">
@@ -364,6 +367,20 @@
     }
     const HOST_STALE_THRESHOLD_STORAGE_KEY = "network-watch-host-stale-threshold-ms-v1";
     const DEFAULT_HOST_STALE_THRESHOLD_MS = 12000;
+    const PINNED_HOSTS_STORAGE_KEY = "network-watch-pinned-machine-ids-v1";
+    function loadPinned() {
+      try {
+        const raw = localStorage.getItem(PINNED_HOSTS_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string" && x.trim()) : [];
+      } catch { return []; }
+    }
+    function savePinned(list) {
+      try {
+        const uniq = Array.from(new Set((Array.isArray(list) ? list : []).filter((x) => typeof x === "string" && x.trim())));
+        localStorage.setItem(PINNED_HOSTS_STORAGE_KEY, JSON.stringify(uniq));
+      } catch {}
+    }
     function loadStaleThresholdMs() {
       try {
         const raw = localStorage.getItem(HOST_STALE_THRESHOLD_STORAGE_KEY);
@@ -383,6 +400,8 @@
 
     let clusterFilterQuery = "";
     let staleThresholdMs = loadStaleThresholdMs();
+    let pinnedIds = loadPinned();
+    let onlyPinned = false;
     function norm(s) { return String(s || "").toLowerCase(); }
     function matchesQuery(row, q) {
       if (!q) return true;
@@ -457,7 +476,11 @@
         if (filterEl && typeof filterEl.value === "string") {
           clusterFilterQuery = filterEl.value.trim().toLowerCase();
         }
-        const rows = rowsAll.filter((r) => matchesQuery(r, clusterFilterQuery));
+        let rows = rowsAll.filter((r) => matchesQuery(r, clusterFilterQuery));
+        if (onlyPinned) {
+          const set = new Set(pinnedIds);
+          rows = rows.filter((r) => set.has(r.id));
+        }
         if (filterCountEl) {
           filterCountEl.textContent = (clusterFilterQuery ? (rows.length + " / " + rowsAll.length) : String(rowsAll.length));
         }
@@ -477,7 +500,10 @@
         tbody.innerHTML = rows.map((r) => {
           const active = r.id === selectedMachineId;
           const staleCls = r.stale ? " row-stale" : "";
-          return r.html.replace(
+          const pinned = pinnedIds.includes(r.id);
+          const pinBtn = '<button class="pin ' + (pinned ? 'pin-on' : '') + '" data-pin="' + esc(r.id) + '" title="' + (pinned ? '取消关注' : '关注') + '">' + (pinned ? '★' : '☆') + '</button>';
+          const patched = r.html.replace('<td><span class="badge mono">', '<td>' + pinBtn + ' <span class="badge mono">');
+          return patched.replace(
             "<tr>",
             '<tr class="' + staleCls.trim() + '" data-machine-id="' + esc(r.id) + '"' +
               (active ? ' style="background: rgba(56,189,248,.14);"' : "") +
@@ -498,6 +524,18 @@
               selectedMachineSnapshot = target.snapshot;
               applySelectedMachine();
             }
+            refreshCluster();
+          });
+        });
+        Array.from(tbody.querySelectorAll("button[data-pin]")).forEach((btn) => {
+          btn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            const id = btn.getAttribute("data-pin");
+            if (!id) return;
+            const set = new Set(pinnedIds);
+            if (set.has(id)) set.delete(id); else set.add(id);
+            pinnedIds = Array.from(set);
+            savePinned(pinnedIds);
             refreshCluster();
           });
         });
@@ -748,6 +786,15 @@
           const next = Math.min(600, Math.max(2, Math.round(sec))) * 1000;
           staleThresholdMs = next;
           saveStaleThresholdMs(next);
+          refreshCluster();
+        });
+      }
+      const onlyPinnedBtn = document.getElementById("cluster_only_pinned");
+      if (onlyPinnedBtn) {
+        onlyPinnedBtn.addEventListener("click", () => {
+          onlyPinned = !onlyPinned;
+          onlyPinnedBtn.textContent = onlyPinned ? "★" : "☆";
+          onlyPinnedBtn.className = "pin" + (onlyPinned ? " pin-on" : "");
           refreshCluster();
         });
       }

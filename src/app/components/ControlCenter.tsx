@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -7,7 +7,7 @@ import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
 import { getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
-import type { OnlineMachine, WebMonitorHint } from "../types";
+import type { MetricHistory, OnlineMachine, SystemSnapshot, WebMonitorHint } from "../types";
 import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
   defaultCardOrder,
@@ -33,8 +33,30 @@ import type { ControlCenterProps } from "./control-center/types";
 import { ControlCenterSettingsModal } from "./control-center/ControlCenterSettingsModal";
 import { emitAppEvent } from "../stateBus";
 import { DEFAULT_HOST_STALE_THRESHOLD_MS, loadHostStaleThresholdMs, saveHostStaleThresholdMs } from "../config/hostStatus";
+import { loadPinnedHostIds, savePinnedHostIds } from "../config/pinnedHosts";
 
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
+const REMOTE_HISTORY_MAX_POINTS = 60;
+
+type HostEventType = "online" | "offline";
+type HostEvent = {
+  timestamp: number;
+  type: HostEventType;
+  machineId: string;
+  label: string;
+};
+
+function pushHistoryValue(arr: number[], value: number, max: number) {
+  const next = [...arr, value];
+  if (next.length > max) {
+    return next.slice(next.length - max);
+  }
+  return next;
+}
+
+function buildEmptyHistory(): MetricHistory {
+  return { cpu: [], memory: [], download: [], upload: [] };
+}
 
 /**
  * 展开态控制中心。
@@ -168,6 +190,12 @@ export function ControlCenter({
   const [tauriWebHint, setTauriWebHint] = useState<WebMonitorHint | null>(null);
   const [onlineMachines, setOnlineMachines] = useState<OnlineMachine[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
+  const [pinnedMachineIds, setPinnedMachineIds] = useState<string[]>(() =>
+    typeof window !== "undefined" ? loadPinnedHostIds() : [],
+  );
+  const [remoteHistoryByMachineId, setRemoteHistoryByMachineId] = useState<Record<string, MetricHistory>>({});
+  const [hostEvents, setHostEvents] = useState<HostEvent[]>([]);
+  const lastStaleByMachineIdRef = useRef<Record<string, boolean>>({});
   const [hostStaleThresholdMs, setHostStaleThresholdMs] = useState(() =>
     typeof window !== "undefined" ? loadHostStaleThresholdMs() : DEFAULT_HOST_STALE_THRESHOLD_MS,
   );
@@ -175,6 +203,17 @@ export function ControlCenter({
   const updateHostStaleThresholdMs = useCallback((ms: number) => {
     setHostStaleThresholdMs(ms);
     saveHostStaleThresholdMs(ms);
+  }, []);
+
+  const togglePinnedMachine = useCallback((machineId: string) => {
+    setPinnedMachineIds((current) => {
+      const set = new Set(current);
+      if (set.has(machineId)) set.delete(machineId);
+      else set.add(machineId);
+      const next = Array.from(set);
+      savePinnedHostIds(next);
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -218,6 +257,71 @@ export function ControlCenter({
           // 边界：后端偶发返回非数组/脏数据时兜底，避免展开页空白
           const safeMachines = Array.isArray(machines) ? machines : [];
           setOnlineMachines(safeMachines);
+          const now = Date.now();
+
+          // 维护 remote history（每台 agent 独立）
+          setRemoteHistoryByMachineId((current) => {
+            const next: Record<string, MetricHistory> = { ...current };
+            for (const item of safeMachines) {
+              const snap = item?.snapshot;
+              if (!snap) continue;
+              const cpu = typeof (snap as SystemSnapshot).cpu_usage === "number" ? (snap as SystemSnapshot).cpu_usage : 0;
+              const memPct =
+                typeof (snap as SystemSnapshot).memory_used === "number" &&
+                typeof (snap as SystemSnapshot).memory_total === "number" &&
+                (snap as SystemSnapshot).memory_total > 0
+                  ? ((snap as SystemSnapshot).memory_used / (snap as SystemSnapshot).memory_total) * 100
+                  : 0;
+              const down =
+                typeof (snap as SystemSnapshot).network_download === "number" ? (snap as SystemSnapshot).network_download : 0;
+              const up =
+                typeof (snap as SystemSnapshot).network_upload === "number" ? (snap as SystemSnapshot).network_upload : 0;
+
+              const prev = next[item.machine_id] ?? buildEmptyHistory();
+              next[item.machine_id] = {
+                cpu: pushHistoryValue(prev.cpu, cpu, REMOTE_HISTORY_MAX_POINTS),
+                memory: pushHistoryValue(prev.memory, memPct, REMOTE_HISTORY_MAX_POINTS),
+                download: pushHistoryValue(prev.download, down, REMOTE_HISTORY_MAX_POINTS),
+                upload: pushHistoryValue(prev.upload, up, REMOTE_HISTORY_MAX_POINTS),
+              };
+            }
+
+            // 清理：只保留当前在线列表中的主机历史，避免无限增长
+            const alive = new Set(safeMachines.map((m) => m.machine_id));
+            for (const key of Object.keys(next)) {
+              if (!alive.has(key)) delete next[key];
+            }
+            return next;
+          });
+
+          // 上下线事件（基于 stale 判定阈值）
+          const nextStale: Record<string, boolean> = {};
+          for (const item of safeMachines) {
+            const ageMs = now - (typeof item.received_at_ms === "number" ? item.received_at_ms : 0);
+            const stale = ageMs > hostStaleThresholdMs;
+            nextStale[item.machine_id] = stale;
+          }
+          const prevStale = lastStaleByMachineIdRef.current;
+          lastStaleByMachineIdRef.current = nextStale;
+          const newEvents: HostEvent[] = [];
+          for (const item of safeMachines) {
+            const prev = prevStale[item.machine_id];
+            const cur = nextStale[item.machine_id];
+            if (typeof prev === "boolean" && prev !== cur) {
+              newEvents.push({
+                timestamp: now,
+                type: cur ? "offline" : "online",
+                machineId: item.machine_id,
+                label: item.label ?? item.host_name ?? item.machine_id,
+              });
+            }
+          }
+          if (newEvents.length) {
+            setHostEvents((current) => {
+              const merged = [...newEvents, ...current];
+              return merged.slice(0, 60);
+            });
+          }
           setSelectedMachineId((current) => {
             if (current && safeMachines.some((item) => item.machine_id === current)) {
               return current;
@@ -242,6 +346,20 @@ export function ControlCenter({
       }
     };
   }, [expanded]);
+
+  const selectedRemoteMachine = useMemo(() => {
+    if (!selectedMachineId) return null;
+    return onlineMachines.find((m) => m.machine_id === selectedMachineId) ?? null;
+  }, [onlineMachines, selectedMachineId]);
+
+  const displaySnapshot = useMemo(() => {
+    return selectedRemoteMachine?.snapshot ?? snapshot;
+  }, [selectedRemoteMachine, snapshot]);
+
+  const displayHistory: MetricHistory = useMemo(() => {
+    if (!selectedRemoteMachine) return history;
+    return remoteHistoryByMachineId[selectedRemoteMachine.machine_id] ?? buildEmptyHistory();
+  }, [history, remoteHistoryByMachineId, selectedRemoteMachine]);
 
   const webMonitorHint = useMemo((): WebMonitorHint | null => {
     if (!expanded) {
@@ -291,30 +409,37 @@ export function ControlCenter({
   }, [displayWebUrl]);
 
   const renderers: Record<CardId, () => React.ReactNode> = {
-    overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
+    overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={displaySnapshot as any} />,
     online_hosts: () => (
       <OnlineHostsCard
         machines={onlineMachines}
         selectedMachineId={selectedMachineId}
         onSelectMachine={setSelectedMachineId}
         staleThresholdMs={hostStaleThresholdMs}
+        pinnedMachineIds={pinnedMachineIds}
+        onTogglePinned={togglePinnedMachine}
+        events={hostEvents}
       />
     ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
     history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
-    connections: () => <ConnectionsCard connections={snapshot.connections} />,
+    connections: () => <ConnectionsCard connections={(displaySnapshot as any).connections} />,
     nic: () => (
       <NicCard
-        nics={snapshot.nics}
-        activeNicId={snapshot.active_nic_id}
+        nics={(displaySnapshot as any).nics ?? []}
+        activeNicId={(displaySnapshot as any).active_nic_id ?? null}
         nicPreference={nicPreference}
         setNicPreference={setNicPreference}
       />
     ),
     process: () => (
-      <ProcessCard processCount={snapshot.process_count} topCpu={snapshot.top_processes_cpu} topMemory={snapshot.top_processes_memory} />
+      <ProcessCard
+        processCount={(displaySnapshot as any).process_count ?? 0}
+        topCpu={(displaySnapshot as any).top_processes_cpu ?? []}
+        topMemory={(displaySnapshot as any).top_processes_memory ?? []}
+      />
     ),
-    disk: () => <DiskCard disks={snapshot.disks} />,
+    disk: () => <DiskCard disks={(displaySnapshot as any).disks ?? []} />,
     theme: () => <ThemeCard theme={theme} setTheme={setTheme} />,
   };
   const cardTitles: Record<CardId, string> = {
@@ -329,14 +454,14 @@ export function ControlCenter({
     theme: "主题",
   };
   const cardSummary: Record<CardId, string> = {
-    overview: `CPU ${formatPercent(snapshot.cpu_usage)} · ↓ ${formatRate(snapshot.network_download)}`,
+    overview: `CPU ${formatPercent((displaySnapshot as any).cpu_usage ?? 0)} · ↓ ${formatRate((displaySnapshot as any).network_download ?? 0)}`,
     online_hosts: `在线 ${onlineMachines.length} 台`,
     alerts: `最近 ${alertRecords.length} 条`,
     history: `样本 ${historySummary.sampleCount} 条`,
-    connections: snapshot.connections ? `总连接 ${snapshot.connections.total}` : "无连接统计",
-    nic: `网卡 ${snapshot.nics.length} 个`,
-    process: `进程 ${snapshot.process_count} 个`,
-    disk: `磁盘 ${snapshot.disks.length} 个`,
+    connections: (displaySnapshot as any).connections ? `总连接 ${(displaySnapshot as any).connections.total}` : "无连接统计",
+    nic: `网卡 ${((displaySnapshot as any).nics ?? []).length} 个`,
+    process: `进程 ${(displaySnapshot as any).process_count ?? 0} 个`,
+    disk: `磁盘 ${((displaySnapshot as any).disks ?? []).length} 个`,
     theme: `主题 ${themeDefinitions[theme].name}`,
   };
   const safeCardOrder = cardOrder.filter((id) => typeof renderers[id] === "function");
@@ -452,27 +577,32 @@ export function ControlCenter({
         <div className="detail-card">
           <div className="detail-header">
             <span>CPU 趋势</span>
-            <strong>{formatPercent(snapshot.cpu_usage)}</strong>
+            <strong>{formatPercent((displaySnapshot as any).cpu_usage ?? 0)}</strong>
           </div>
-          <Sparkline values={history.cpu} tone="cpu" />
+          <Sparkline values={displayHistory.cpu} tone="cpu" />
         </div>
         <div className="detail-card">
           <div className="detail-header">
             <span>内存趋势</span>
-            <strong>{formatMemoryUsage(snapshot.memory_used, snapshot.memory_total)}</strong>
+            <strong>
+              {formatMemoryUsage(
+                (displaySnapshot as any).memory_used ?? 0,
+                (displaySnapshot as any).memory_total ?? 0,
+              )}
+            </strong>
           </div>
-          <Sparkline values={history.memory} tone="memory" />
+          <Sparkline values={displayHistory.memory} tone="memory" />
         </div>
         <div className="detail-card detail-card-wide">
           <div className="detail-header">
             <span>网络趋势</span>
             <strong>
-              ↓ {formatRate(snapshot.network_download)} / ↑ {formatRate(snapshot.network_upload)}
+              ↓ {formatRate((displaySnapshot as any).network_download ?? 0)} / ↑ {formatRate((displaySnapshot as any).network_upload ?? 0)}
             </strong>
           </div>
           <div className="network-lines">
-            <Sparkline values={history.download} tone="download" />
-            <Sparkline values={history.upload} tone="upload" />
+            <Sparkline values={displayHistory.download} tone="download" />
+            <Sparkline values={displayHistory.upload} tone="upload" />
           </div>
         </div>
       </div>
