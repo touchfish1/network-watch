@@ -105,22 +105,36 @@ jobs:
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           args: ${{ matrix.args }}
 
-      - name: Create zipped installers (Windows/macOS)
-        if: matrix.platform == 'windows-latest' || matrix.platform == 'macos-latest'
+      - name: Create zipped installers (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist-release | Out-Null
+
+          $installers = @()
+          $installers += Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
+          $installers += Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+
+          foreach ($installer in $installers) {
+            $zipName = Join-Path "dist-release" ($installer.Name + ".zip")
+            if (Test-Path $zipName) { Remove-Item -Force $zipName }
+            Compress-Archive -Path $installer.FullName -DestinationPath $zipName
+            Write-Host "Created: $zipName"
+          }
+
+      - name: Create zipped installers (macOS)
+        if: matrix.platform == 'macos-latest'
         shell: bash
         run: |
           set -euo pipefail
           shopt -s nullglob
           mkdir -p dist-release
 
-          installers=()
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
-            installers+=(src-tauri/target/release/bundle/nsis/*.exe)
-            installers+=(src-tauri/target/release/bundle/msi/*.msi)
-          elif [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
-            installers+=(src-tauri/target/release/bundle/dmg/*.dmg)
-            installers+=(src-tauri/target/release/bundle/pkg/*.pkg)
-          fi
+          installers=(
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/pkg/*.pkg
+          )
 
           for installer in "${installers[@]}"; do
             base_name="$(basename "$installer")"
