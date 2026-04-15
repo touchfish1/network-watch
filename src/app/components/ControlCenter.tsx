@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -28,7 +28,7 @@ import { ProcessCard } from "./control-center/ProcessCard";
 import { DiskCard } from "./control-center/DiskCard";
 import { OnlineHostsCard } from "./control-center/OnlineHostsCard";
 import { ThemeCard } from "./control-center/ThemeCard";
-import { UpdateCard } from "./control-center/UpdateCard";
+import { UpdateModal } from "./control-center/UpdateModal";
 import type { ControlCenterProps } from "./control-center/types";
 import { ControlCenterSettingsModal } from "./control-center/ControlCenterSettingsModal";
 import { emitAppEvent } from "../stateBus";
@@ -40,12 +40,12 @@ const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
  *
  * 组成：
  * - 顶部标题栏：支持拖拽移动窗口；提供“在线升级”快捷入口与收起
- * - 设置面板（grid）：总览/网卡/进程/磁盘/主题/更新
+ * - 设置面板（grid）：总览/网卡/进程/磁盘/主题
  * - 详情区：CPU/内存/网络趋势（sparkline）
  *
  * 交互注意：
  * - 标题栏区域需要可拖拽（`data-tauri-drag-region`），但按钮必须 `no-drag`
- * - “在线升级”卡片放在末尾以减少占位，但提供滚动定位快捷按钮避免难找
+ * - “在线升级”按钮弹出独立详情窗口，不占用悬窗卡片区
  */
 
 export function ControlCenter({
@@ -75,12 +75,12 @@ export function ControlCenter({
   history,
 }: ControlCenterProps) {
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [clickThroughEnabled, setClickThroughEnabledState] = useState(() => {
     const saved = window.localStorage.getItem(CLICK_THROUGH_STORAGE_KEY);
     return saved === "1" || saved === "true";
   });
   const [showSettingsPopover, setShowSettingsPopover] = useState(false);
-  const updateCardRef = useRef<HTMLElement | null>(null);
 
   /**
    * 与托盘「鼠标穿透」菜单同步：后端在任意路径变更穿透后会广播该事件。
@@ -114,8 +114,11 @@ export function ControlCenter({
     });
   }, [clickThroughEnabled]);
 
-  const scrollToUpdateCard = useCallback(() => {
-    updateCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const openUpdateModal = useCallback(() => {
+    setShowUpdateModal(true);
+  }, []);
+  const closeUpdateModal = useCallback(() => {
+    setShowUpdateModal(false);
   }, []);
   const hasUpdate = updateState.stage === "available";
   const toggleSettingsPopover = useCallback(() => {
@@ -303,16 +306,6 @@ export function ControlCenter({
     ),
     disk: () => <DiskCard disks={snapshot.disks} />,
     theme: () => <ThemeCard theme={theme} setTheme={setTheme} />,
-    update: () => (
-      <UpdateCard
-        appVersion={appVersion}
-        updateState={updateState}
-        showReleaseNotes={showReleaseNotes}
-        setShowReleaseNotes={setShowReleaseNotes}
-        onCheckOrInstallUpdate={onCheckOrInstallUpdate}
-        updateCardRef={updateCardRef}
-      />
-    ),
   };
   const cardTitles: Record<CardId, string> = {
     overview: "系统总览",
@@ -324,7 +317,6 @@ export function ControlCenter({
     process: "进程",
     disk: "磁盘",
     theme: "主题",
-    update: "在线升级",
   };
   const cardSummary: Record<CardId, string> = {
     overview: `CPU ${formatPercent(snapshot.cpu_usage)} · ↓ ${formatRate(snapshot.network_download)}`,
@@ -336,7 +328,6 @@ export function ControlCenter({
     process: `进程 ${snapshot.process_count} 个`,
     disk: `磁盘 ${snapshot.disks.length} 个`,
     theme: `主题 ${themeDefinitions[theme].name}`,
-    update: updateState.message || "检查更新状态",
   };
   const safeCardOrder = cardOrder.filter((id) => typeof renderers[id] === "function");
 
@@ -348,7 +339,7 @@ export function ControlCenter({
         hasUpdate={hasUpdate}
         clickThroughEnabled={clickThroughEnabled}
         onToggleClickThrough={toggleClickThrough}
-        onScrollToUpdateCard={scrollToUpdateCard}
+        onOpenUpdateModal={openUpdateModal}
         settingsMenu={
           <button
             type="button"
@@ -418,6 +409,15 @@ export function ControlCenter({
         onResetCards={resetCards}
         onToggleCard={toggleCard}
         onMoveCard={moveCard}
+      />
+      <UpdateModal
+        open={showUpdateModal}
+        appVersion={appVersion}
+        updateState={updateState}
+        showReleaseNotes={showReleaseNotes}
+        setShowReleaseNotes={setShowReleaseNotes}
+        onClose={closeUpdateModal}
+        onCheckOrInstallUpdate={onCheckOrInstallUpdate}
       />
 
       <section className="settings-panel">

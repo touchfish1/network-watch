@@ -9,11 +9,11 @@ use clap::{Parser, Subcommand};
 #[command(name = "network-watch-agent")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(
-    about = "Network Watch 无头 agent：采集指标、发现 GUI、上报；含 check/upgrade/hosts/label/machine-id 等子命令",
+    about = "Network Watch 无头 agent：采集指标、发现 GUI、上报；含 check/upgrade/hosts/label/machine-id/autostart 等子命令",
     long_about = None
 )]
 #[command(
-    after_help = "简要：check=检查更新，upgrade=自更新，hosts=枚举局域网 GUI，label=标签，machine-id=机器标识，guide=完整说明。\n常用环境：NETWORK_WATCH_MACHINE_ID、NETWORK_WATCH_COLLECTOR、NETWORK_WATCH_DISCOVERY_PORT。"
+    after_help = "简要：check=检查更新，upgrade=自更新，hosts=枚举局域网 GUI，label=标签，machine-id=机器标识，autostart=开机自启，guide=完整说明。\n常用环境：NETWORK_WATCH_MACHINE_ID、NETWORK_WATCH_COLLECTOR、NETWORK_WATCH_DISCOVERY_PORT。"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -73,5 +73,17 @@ pub enum AgentCommand {
         /// 清除已设置 machine_id
         #[arg(long)]
         clear: bool,
+    },
+    /// 配置 agent 开机自启（Linux: systemd --user）。
+    Autostart {
+        /// 启用开机自启（写入并启用 user service）
+        #[arg(long)]
+        enable: bool,
+        /// 禁用开机自启（停用并删除 user service）
+        #[arg(long)]
+        disable: bool,
+        /// 查看当前自启状态（默认动作）
+        #[arg(long)]
+        status: bool,
     },
 }

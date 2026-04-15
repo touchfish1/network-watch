@@ -9,8 +9,7 @@ export type CardId =
   | "nic"
   | "process"
   | "disk"
-  | "theme"
-  | "update";
+  | "theme";
 export type StatusItemId = "cpu" | "mem" | "down" | "up" | "active_nic" | "disk" | "connections";
 
 const CARD_ORDER_KEY = "network-watch-card-order-v1";
@@ -27,7 +26,6 @@ export const defaultCardOrder: CardId[] = [
   "process",
   "disk",
   "theme",
-  "update",
 ];
 export const defaultCardVisibility: Record<CardId, boolean> = {
   overview: true,
@@ -39,7 +37,6 @@ export const defaultCardVisibility: Record<CardId, boolean> = {
   process: true,
   disk: true,
   theme: true,
-  update: true,
 };
 export const defaultStatusVisibility: Record<StatusItemId, boolean> = {
   cpu: true,

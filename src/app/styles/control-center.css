@@ -140,6 +140,14 @@
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
+.update-modal-panel {
+  width: min(100%, 680px);
+}
+
+.update-modal-content {
+  grid-template-columns: 1fr;
+}
+
 .settings-modal-header {
   display: flex;
   align-items: flex-start;

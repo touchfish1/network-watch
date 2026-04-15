@@ -109,6 +109,7 @@ fn print_full_guide() {
   network-watch-agent hosts        单次扫描局域网 GUI 节点，打印 base / ingest
   network-watch-agent label [VALUE] 查看/设置本机展示标签（Web/GUI 列表显示）
   network-watch-agent machine-id [VALUE] 查看/设置 machine_id（上报主键）
+  network-watch-agent autostart --enable|--disable|--status  配置开机自启（Linux）
   network-watch-agent hosts --push <URL>   扫描后将 JSON 列表 POST 到给定 URL
   network-watch-agent guide        本说明（同 help）
   network-watch-agent -h           clap 简短帮助

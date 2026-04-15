@@ -7,7 +7,7 @@ type HeaderBarProps = {
   hasUpdate: boolean;
   clickThroughEnabled: boolean;
   onToggleClickThrough: () => void;
-  onScrollToUpdateCard: () => void;
+  onOpenUpdateModal: () => void;
   settingsMenu: React.ReactNode;
   onCollapse: () => void;
   onHeaderPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
@@ -19,7 +19,7 @@ export function HeaderBar({
   hasUpdate,
   clickThroughEnabled,
   onToggleClickThrough,
-  onScrollToUpdateCard,
+  onOpenUpdateModal,
   settingsMenu,
   onCollapse,
   onHeaderPointerDown,
@@ -50,7 +50,7 @@ export function HeaderBar({
           type="button"
           className={`expand-button expand-button-secondary ${hasUpdate ? "expand-button-has-update" : ""}`}
           data-tauri-drag-region="false"
-          onClick={onScrollToUpdateCard}
+          onClick={onOpenUpdateModal}
         >
           在线升级
           {hasUpdate ? <span className="update-dot" aria-hidden="true" /> : null}
