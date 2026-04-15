@@ -14,6 +14,7 @@
     "core:window:allow-monitor-from-point",
     "core:window:allow-start-dragging",
     "core:window:allow-close",
+    "opener:default",
     "process:default",
     "updater:default"
   ]
