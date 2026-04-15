@@ -11,7 +11,7 @@ use tauri::{AppHandle, Manager, RunEvent, Runtime, WindowEvent};
 use tauri_plugin_positioner::{Position, WindowExt as _};
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags, DEFAULT_FILENAME};
 
-use crate::{constants, overlay, state};
+use crate::desktop::{constants, overlay, state};
 
 /// 初始化主窗口。
 ///

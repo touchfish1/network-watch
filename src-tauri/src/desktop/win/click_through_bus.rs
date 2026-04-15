@@ -7,7 +7,7 @@
 use tauri::{App, AppHandle, Emitter, Manager, Runtime};
 use tauri::menu::CheckMenuItem;
 
-use crate::constants;
+use crate::desktop::constants;
 
 /// 托盘菜单中「鼠标穿透」勾选条目的句柄（仅 Windows 构建）。
 pub struct ClickThroughTrayMenuItem<R: Runtime>(pub CheckMenuItem<R>);

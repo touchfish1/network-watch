@@ -26,12 +26,12 @@ use sysinfo::{
 use tauri::{AppHandle, Emitter, Manager};
 
 #[cfg(feature = "desktop")]
-use crate::{constants, state};
+use crate::core::web_server::{LatestSnapshot, SnapshotBroadcaster};
 #[cfg(feature = "desktop")]
-use crate::web_server::{LatestSnapshot, SnapshotBroadcaster};
+use crate::desktop::{constants, state};
 
 #[cfg(all(target_os = "windows", feature = "desktop"))]
-type ConnectionsSnapshot = crate::windows_connections::ConnectionsSnapshot;
+type ConnectionsSnapshot = crate::desktop::win::windows_connections::ConnectionsSnapshot;
 #[cfg(not(all(target_os = "windows", feature = "desktop")))]
 type ConnectionsSnapshot = ();
 
@@ -293,7 +293,7 @@ where
                 top_processes_cpu,
                 top_processes_memory,
                 #[cfg(all(target_os = "windows", feature = "desktop"))]
-                connections: crate::windows_connections::get_connections_snapshot(),
+                connections: crate::desktop::win::windows_connections::get_connections_snapshot(),
                 #[cfg(not(all(target_os = "windows", feature = "desktop")))]
                 connections: None,
             };

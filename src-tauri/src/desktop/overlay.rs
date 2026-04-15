@@ -17,7 +17,7 @@ use std::{thread, time::Duration};
 #[cfg(target_os = "windows")]
 use tauri::AppHandle;
 
-use crate::{constants, state};
+use crate::desktop::{constants, state};
 
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -134,7 +134,7 @@ pub fn apply_click_through_setting<R: Runtime>(app: &tauri::AppHandle<R>, enable
     if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
         apply_overlay_mode(&window, state::overlay_interactive());
     }
-    crate::click_through_bus::notify_click_through_changed(app, enabled);
+    crate::desktop::win::click_through_bus::notify_click_through_changed(app, enabled);
 }
 
 /// 设置鼠标穿透开关（Windows）。

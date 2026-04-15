@@ -22,7 +22,7 @@ use tokio::sync::{broadcast, RwLock};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::sampler::SystemSnapshot;
+use crate::core::sampler::SystemSnapshot;
 
 #[derive(Clone)]
 pub struct LatestSnapshot(pub Arc<RwLock<Option<SystemSnapshot>>>);
@@ -177,7 +177,7 @@ async fn root_page(State(st): State<WebState>) -> impl IntoResponse {
     } else {
         st.host_ips.join(" / ")
     };
-    const TEMPLATE: &str = include_str!("web/index.html");
+    const TEMPLATE: &str = include_str!("../web/index.html");
     let html = TEMPLATE
         .replace("__MACHINE_ID__", &st.machine_id)
         .replace("__HOST_NAME__", &st.host_name)

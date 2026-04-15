@@ -7,7 +7,7 @@
 
 use serde::Serialize;
 
-use crate::state;
+use crate::desktop::state;
 
 /// 提供给前端的运行时诊断快照。
 ///

@@ -1,6 +1,6 @@
 [package]
 name = "src-tauri"
-version = "0.3.25"
+version = "0.3.26"
 edition = "2024"
 default-run = "src-tauri"
 
@@ -16,8 +16,8 @@ desktop = [
   "dep:tauri-plugin-window-state",
   "dep:tauri-build",
 ]
-# Headless agent：仅保留采样/发现/上报，不引入 GUI 依赖。
-agent = []
+# Headless agent：采样/发现/上报 + CLI（check / upgrade）。
+agent = ["dep:clap", "dep:semver"]
 
 [[bin]]
 name = "src-tauri"
@@ -47,13 +47,18 @@ tower-http = { version = "0.6", features = ["cors"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "charset", "http2", "rustls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = { version = "1", optional = true }
 sysinfo = "0.37.2"
+clap = { version = "4.5", features = ["derive"], optional = true }
 tauri = { version = "2.9.2", features = ["tray-icon"], optional = true }
 tauri-plugin-autostart = { version = "2.5.0", optional = true }
 tauri-plugin-positioner = { version = "2.3.1", optional = true }
 tauri-plugin-process = { version = "2.3.1", optional = true }
 tauri-plugin-updater = { version = "2.10.1", optional = true }
 tauri-plugin-window-state = { version = "2.4.0", optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+daemonize = "0.5"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [

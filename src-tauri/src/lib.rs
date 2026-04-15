@@ -1,44 +1,32 @@
 //! Tauri 后端入口与模块编排。
 //!
 //! 这个 crate 负责把几个相对独立的能力组合成一个“常驻置顶悬浮窗”应用：
-//! - `tray`：托盘菜单与开机启动开关
-//! - `windowing`：窗口初始化、关闭拦截、显示/隐藏切换与事件分发
-//! - `sampler`：系统指标采样线程，按固定周期向前端广播 `system-snapshot`
-//! - `overlay`：置顶/不抢焦点/仍可点击的窗口叠加策略（Windows 额外有 topmost guard）
-//! - `diagnostics`/`state`：跨线程状态与诊断数据（供前端排障/显示）
+//! - `desktop::tray`：托盘菜单与开机启动开关
+//! - `desktop::windowing`：窗口初始化、关闭拦截、显示/隐藏切换与事件分发
+//! - `core::sampler`：系统指标采样线程，按固定周期向前端广播 `system-snapshot`
+//! - `desktop::overlay`：置顶/不抢焦点/仍可点击的窗口叠加策略（Windows 额外有 topmost guard）
+//! - `desktop::diagnostics` / `desktop::state`：跨线程状态与诊断数据（供前端排障/显示）
 //!
 //! 前端通过 `invoke` 调用少量命令（例如切换 overlay 交互性），并通过事件订阅接收采样快照。
 //!
 //! **特性**：`desktop` 为 GUI；`agent` 为独立 headless 二进制（见 `network-watch-agent`），二者可单独或同时启用。
 
-#[cfg(feature = "desktop")]
-mod constants;
-#[cfg(feature = "desktop")]
-mod state;
-mod sampler;
-mod web_server;
+mod core;
 
 #[cfg(feature = "desktop")]
-mod diagnostics;
-#[cfg(feature = "desktop")]
-mod overlay;
-#[cfg(feature = "desktop")]
-mod tray;
-#[cfg(feature = "desktop")]
-mod windowing;
-#[cfg(all(feature = "desktop", target_os = "windows"))]
-mod click_through_bus;
-#[cfg(all(feature = "desktop", target_os = "windows"))]
-mod windows_connections;
+mod desktop;
+
+#[cfg(feature = "agent")]
+pub mod agent;
 
 #[cfg(feature = "desktop")]
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(feature = "desktop")]
-use diagnostics::get_runtime_diagnostics;
+use desktop::diagnostics::get_runtime_diagnostics;
 #[cfg(feature = "desktop")]
-use overlay::set_overlay_interactive;
+use desktop::overlay::set_overlay_interactive;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
-use overlay::set_click_through_enabled;
+use desktop::overlay::set_click_through_enabled;
 
 #[cfg(feature = "desktop")]
 use serde::Serialize;
@@ -139,21 +127,21 @@ fn get_web_monitor_hint() -> WebMonitorHint {
     }
 }
 
-fn env_enabled(key: &str, default_value: bool) -> bool {
+pub(crate) fn env_enabled(key: &str, default_value: bool) -> bool {
     std::env::var(key)
         .ok()
         .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
         .unwrap_or(default_value)
 }
 
-fn env_u16(key: &str, default_value: u16) -> u16 {
+pub(crate) fn env_u16(key: &str, default_value: u16) -> u16 {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse::<u16>().ok())
         .unwrap_or(default_value)
 }
 
-fn env_u64(key: &str, default_value: u64) -> u64 {
+pub(crate) fn env_u64(key: &str, default_value: u64) -> u64 {
     std::env::var(key)
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -219,6 +207,49 @@ pub fn run_entry() {
     }
 }
 
+#[cfg(all(feature = "agent", target_os = "linux"))]
+fn agent_log_file_path(cwd: &std::path::Path) -> std::path::PathBuf {
+    let name = std::env::var("NETWORK_WATCH_AGENT_LOG")
+        .unwrap_or_else(|_| "network-watch-agent.log".to_string());
+    let p = std::path::PathBuf::from(name);
+    if p.is_absolute() {
+        p
+    } else {
+        cwd.join(p)
+    }
+}
+
+/// Linux 专用：在启动业务逻辑前将进程守护进程化，并把 stdout/stderr 追加到日志文件。
+///
+/// - 默认：写入当前工作目录下 `network-watch-agent.log`（可用 `NETWORK_WATCH_AGENT_LOG` 覆盖，相对路径相对当前目录）。
+/// - `NETWORK_WATCH_AGENT_FOREGROUND=1`：不守护进程化，仍在前台运行（便于调试）。
+#[cfg(all(feature = "agent", target_os = "linux"))]
+pub fn linux_prepare_standalone_agent() -> std::io::Result<()> {
+    use daemonize::Daemonize;
+    use std::fs::OpenOptions;
+    use std::path::PathBuf;
+
+    if env_enabled("NETWORK_WATCH_AGENT_FOREGROUND", false) {
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let log_path = agent_log_file_path(&cwd);
+
+    let stdout = OpenOptions::new().create(true).append(true).open(&log_path)?;
+    let stderr = stdout.try_clone()?;
+
+    let daemonize = Daemonize::new()
+        .working_directory(&cwd)
+        .stdout(stdout)
+        .stderr(stderr)
+        .umask(0o022);
+
+    daemonize.start().map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, format!("daemonize: {e}"))
+    })
+}
+
 /// 独立 headless agent 二进制入口（`network-watch-agent`），不依赖 Tauri / 前端。
 #[cfg(feature = "agent")]
 pub fn run_standalone_agent() {
@@ -234,8 +265,8 @@ pub fn run_standalone_agent() {
 /// - 在运行循环中把 `RunEvent` 分发给 `windowing` 处理（如关闭拦截、移动/缩放等）
 ///
 /// 说明：
-/// - 采样数据通过事件 `system-snapshot` 广播给前端（见 `constants::EVENT_SYSTEM_SNAPSHOT`）。
-/// - Windows 下会启动 topmost guard，以降低“被系统/其他窗口抢走置顶层级”的边缘问题（见 `overlay`）。
+/// - 采样数据通过事件 `system-snapshot` 广播给前端（见 `desktop::constants::EVENT_SYSTEM_SNAPSHOT`）。
+/// - Windows 下会启动 topmost guard，以降低“被系统/其他窗口抢走置顶层级”的边缘问题（见 `desktop::overlay`）。
 #[cfg(feature = "desktop")]
 pub fn run() {
     tauri::Builder::default()
@@ -257,15 +288,15 @@ pub fn run() {
             set_click_through_enabled
         ])
         .setup(|app| {
-            tray::build_tray(app)?;
-            windowing::initialize_window(app.app_handle());
+            desktop::tray::build_tray(app)?;
+            desktop::windowing::initialize_window(app.app_handle());
             // Web 监控服务（可选）：默认开启，端口可用环境变量覆盖
             // - NETWORK_WATCH_WEB=0 关闭
             // - NETWORK_WATCH_WEB_BIND=127.0.0.1:17321 覆盖绑定地址
             let web_enabled = env_enabled("NETWORK_WATCH_WEB", true);
             let machine_id = std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "local".to_string());
-            let (latest, tx) = web_server::new_state();
-            let machines = web_server::new_machine_store();
+            let (latest, tx) = core::web_server::new_state();
+            let machines = core::web_server::new_machine_store();
             app.manage(latest.clone());
             app.manage(tx.clone());
             app.manage(machines.clone());
@@ -279,18 +310,18 @@ pub fn run() {
                     let discovery_port = env_u16("NETWORK_WATCH_DISCOVERY_PORT", 17322);
                     start_udp_discovery_responder(discovery_port, parse_port(&bind));
                 }
-                web_server::start_web_server(latest, machines, tx, machine_id, bind);
+                core::web_server::start_web_server(latest, machines, tx, machine_id, bind);
             }
 
-            sampler::start_sampler(app.app_handle().clone());
+            core::sampler::start_sampler(app.app_handle().clone());
             #[cfg(target_os = "windows")]
-            overlay::start_windows_topmost_guard(app.app_handle().clone());
+            desktop::overlay::start_windows_topmost_guard(app.app_handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("failed to build Tauri application")
         .run(|app_handle, event| {
-            windowing::handle_run_event(app_handle, event);
+            desktop::windowing::handle_run_event(app_handle, event);
         });
 }
 
@@ -319,13 +350,13 @@ fn run_agent_mode() {
 
     // Agent 模式默认关闭内置 web，可用 NETWORK_WATCH_WEB=1 开启（便于本地排障）
     if env_enabled("NETWORK_WATCH_WEB", false) {
-        let (latest, tx) = web_server::new_state();
-        let machines = web_server::new_machine_store();
+        let (latest, tx) = core::web_server::new_state();
+        let machines = core::web_server::new_machine_store();
         let bind = std::env::var("NETWORK_WATCH_WEB_BIND")
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(|| "0.0.0.0:17321".parse().expect("default bind addr"));
-        web_server::start_web_server(latest, machines, tx, machine_id.clone(), bind);
+        core::web_server::start_web_server(latest, machines, tx, machine_id.clone(), bind);
     }
 
     let http_client = reqwest::blocking::Client::builder()
@@ -430,8 +461,8 @@ fn run_agent_mode() {
         });
     }
 
-    let (tx, rx) = mpsc::sync_channel::<sampler::SystemSnapshot>(8);
-    sampler::start_headless_sampler(move |snapshot| {
+    let (tx, rx) = mpsc::sync_channel::<core::sampler::SystemSnapshot>(8);
+    core::sampler::start_headless_sampler(move |snapshot| {
         let _ = tx.try_send(snapshot);
     });
 

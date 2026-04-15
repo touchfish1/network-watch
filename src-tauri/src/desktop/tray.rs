@@ -16,9 +16,11 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as _;
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
-use crate::{constants, windowing};
+use crate::desktop::{constants, windowing};
 #[cfg(target_os = "windows")]
-use crate::{click_through_bus, overlay, state};
+use crate::desktop::win::click_through_bus;
+#[cfg(target_os = "windows")]
+use crate::desktop::{overlay, state};
 
 /// 创建托盘与菜单，并绑定事件处理。
 ///
