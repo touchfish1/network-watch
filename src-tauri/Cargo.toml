@@ -1,14 +1,39 @@
 [package]
 name = "src-tauri"
-version = "0.3.18"
+version = "0.3.19"
 edition = "2024"
+
+[features]
+# 桌面 GUI（默认）：包含 Tauri 及其插件/构建脚本。
+default = ["desktop"]
+desktop = [
+  "dep:tauri",
+  "dep:tauri-plugin-autostart",
+  "dep:tauri-plugin-positioner",
+  "dep:tauri-plugin-process",
+  "dep:tauri-plugin-updater",
+  "dep:tauri-plugin-window-state",
+  "dep:tauri-build",
+]
+# Headless agent：仅保留采样/发现/上报，不引入 GUI 依赖。
+agent = []
+
+[[bin]]
+name = "network-watch"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "network-watch-agent"
+path = "src/bin/network-watch-agent.rs"
+required-features = ["agent"]
 
 [lib]
 name = "network_watch_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.1", features = [] }
+tauri-build = { version = "2.5.1", features = [], optional = true }
 
 [dependencies]
 axum = { version = "0.8", features = ["macros"] }
@@ -17,15 +42,16 @@ hostname = "0.4"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.6", features = ["cors"] }
+reqwest = { version = "0.13", features = ["blocking", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sysinfo = "0.37.2"
-tauri = { version = "2.9.2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2.5.0"
-tauri-plugin-positioner = "2.3.1"
-tauri-plugin-process = "2.3.1"
-tauri-plugin-updater = "2.10.1"
-tauri-plugin-window-state = "2.4.0"
+tauri = { version = "2.9.2", features = ["tray-icon"], optional = true }
+tauri-plugin-autostart = { version = "2.5.0", optional = true }
+tauri-plugin-positioner = { version = "2.3.1", optional = true }
+tauri-plugin-process = { version = "2.3.1", optional = true }
+tauri-plugin-updater = { version = "2.10.1", optional = true }
+tauri-plugin-window-state = { version = "2.4.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61.2", features = [

@@ -8,7 +8,7 @@
 //! - 默认仅用于局域网/本机自用，不做复杂鉴权；可通过环境变量关闭或绑定到 127.0.0.1
 //! - SSE 用于推送快照，避免频繁轮询
 
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 
 use axum::{
     extract::State,
@@ -17,7 +17,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, RwLock};
 use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tower_http::cors::{Any, CorsLayer};
@@ -31,12 +31,18 @@ pub struct LatestSnapshot(pub Arc<RwLock<Option<SystemSnapshot>>>);
 pub struct SnapshotBroadcaster(pub broadcast::Sender<SystemSnapshot>);
 
 #[derive(Clone)]
+pub struct MachineSnapshots(pub Arc<RwLock<HashMap<String, serde_json::Value>>>);
+
+#[derive(Clone)]
 struct WebState {
     latest: LatestSnapshot,
+    machines: MachineSnapshots,
     tx: SnapshotBroadcaster,
     machine_id: String,
     host_name: String,
     host_ips: Vec<String>,
+    role: String,
+    ingest_url: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -46,14 +52,35 @@ struct SnapshotEnvelope {
     snapshot: Option<SystemSnapshot>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct IngestEnvelope {
+    machine_id: String,
+    snapshot: serde_json::Value,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "snake_case")]
+struct CapabilitiesEnvelope {
+    machine_id: String,
+    role: String,
+    ingest_url: String,
+    version: String,
+}
+
 pub fn new_state() -> (LatestSnapshot, SnapshotBroadcaster) {
     let latest = LatestSnapshot(Arc::new(RwLock::new(None)));
     let (tx, _rx) = broadcast::channel::<SystemSnapshot>(16);
     (latest, SnapshotBroadcaster(tx))
 }
 
+pub fn new_machine_store() -> MachineSnapshots {
+    MachineSnapshots(Arc::new(RwLock::new(HashMap::new())))
+}
+
 pub fn start_web_server(
     latest: LatestSnapshot,
+    machines: MachineSnapshots,
     tx: SnapshotBroadcaster,
     machine_id: String,
     bind: SocketAddr,
@@ -67,10 +94,23 @@ pub fn start_web_server(
 
     let state = WebState {
         latest,
+        machines,
         tx,
         machine_id,
         host_name,
         host_ips,
+        role: std::env::var("NETWORK_WATCH_ROLE").unwrap_or_else(|_| {
+            if std::env::var("NETWORK_WATCH_AGENT")
+                .ok()
+                .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+                .unwrap_or(false)
+            {
+                "agent".to_string()
+            } else {
+                "desktop_gui".to_string()
+            }
+        }),
+        ingest_url: "/api/v1/ingest".to_string(),
     };
 
     let cors = CorsLayer::new()
@@ -81,9 +121,11 @@ pub fn start_web_server(
     let app = Router::new()
         .route("/", get(root_page))
         .route("/api/v1/health", get(health))
+        .route("/api/v1/capabilities", get(capabilities))
         .route("/api/v1/snapshot", get(get_snapshot))
+        .route("/api/v1/machines", get(get_machines))
         .route("/api/v1/stream", get(stream_sse))
-        .route("/api/v1/ingest", post(ingest_stub))
+        .route("/api/v1/ingest", post(ingest_snapshot))
         .layer(cors)
         .with_state(state);
 
@@ -108,6 +150,15 @@ async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
 
+async fn capabilities(State(st): State<WebState>) -> impl IntoResponse {
+    Json(CapabilitiesEnvelope {
+        machine_id: st.machine_id,
+        role: st.role,
+        ingest_url: st.ingest_url,
+        version: env!("CARGO_PKG_VERSION").to_string(),
+    })
+}
+
 async fn root_page(State(st): State<WebState>) -> impl IntoResponse {
     let ips = if st.host_ips.is_empty() {
         "—".to_string()
@@ -130,8 +181,30 @@ async fn get_snapshot(State(st): State<WebState>) -> impl IntoResponse {
     })
 }
 
-async fn ingest_stub() -> impl IntoResponse {
-    (StatusCode::NOT_IMPLEMENTED, "ingest is reserved for future multi-machine support")
+async fn get_machines(State(st): State<WebState>) -> impl IntoResponse {
+    let list = st.machines.0.read().await.clone();
+    Json(list)
+}
+
+async fn ingest_snapshot(
+    State(st): State<WebState>,
+    Json(payload): Json<IngestEnvelope>,
+) -> impl IntoResponse {
+    {
+        let mut map = st.machines.0.write().await;
+        map.insert(
+            payload.machine_id,
+            serde_json::json!({
+                "received_at_ms": SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or_default(),
+                "snapshot": payload.snapshot,
+            }),
+        );
+    }
+
+    (StatusCode::ACCEPTED, "ok").into_response()
 }
 
 async fn stream_sse(

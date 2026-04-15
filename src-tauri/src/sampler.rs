@@ -21,14 +21,18 @@ use sysinfo::{
     CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate,
     RefreshKind, System,
 };
+
+#[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter, Manager};
 
+#[cfg(feature = "desktop")]
 use crate::{constants, state};
+#[cfg(feature = "desktop")]
 use crate::web_server::{LatestSnapshot, SnapshotBroadcaster};
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", feature = "desktop"))]
 type ConnectionsSnapshot = crate::windows_connections::ConnectionsSnapshot;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(all(target_os = "windows", feature = "desktop")))]
 type ConnectionsSnapshot = ();
 
 /// 进程快照（用于 Top 列表展示）。
@@ -128,7 +132,39 @@ pub struct SystemSnapshot {
 /// 启动采样线程。
 ///
 /// - **线程模型**：后台线程每秒采样一次并 emit\n+/// - **失败策略**：尽量不 panic；emit 失败会被忽略（前端可能未监听/窗口未就绪）\n+/// - **性能**：使用 `new_with_specifics` 只刷新需要的子系统，避免不必要开销
+#[cfg(feature = "desktop")]
 pub fn start_sampler(app: AppHandle) {
+    run_sampling_loop(move |snapshot| {
+        state::record_snapshot(snapshot.timestamp);
+        // 供 Web API 读取
+        if let Some(latest) = app.try_state::<LatestSnapshot>() {
+            // 不阻塞采样线程：尝试写入；失败则忽略
+            if let Ok(mut guard) = latest.0.try_write() {
+                *guard = Some(snapshot.clone());
+            }
+        }
+        // 供 Web SSE 推送
+        if let Some(tx) = app.try_state::<SnapshotBroadcaster>() {
+            let _ = tx.0.send(snapshot.clone());
+        }
+        let _ = app.emit(constants::EVENT_SYSTEM_SNAPSHOT, snapshot);
+    });
+}
+
+/// 启动无 GUI 的 headless 采样线程（给 Linux agent 使用）。
+///
+/// `on_snapshot` 会在每次采样后被调用（约 1s/次）。
+pub fn start_headless_sampler<F>(on_snapshot: F)
+where
+    F: FnMut(SystemSnapshot) + Send + 'static,
+{
+    run_sampling_loop(on_snapshot);
+}
+
+fn run_sampling_loop<F>(mut on_snapshot: F)
+where
+    F: FnMut(SystemSnapshot) + Send + 'static,
+{
     thread::spawn(move || {
         let mut system = System::new_with_specifics(
             RefreshKind::nothing()
@@ -256,25 +292,13 @@ pub fn start_sampler(app: AppHandle) {
                 process_count,
                 top_processes_cpu,
                 top_processes_memory,
-                #[cfg(target_os = "windows")]
+                #[cfg(all(target_os = "windows", feature = "desktop"))]
                 connections: crate::windows_connections::get_connections_snapshot(),
-                #[cfg(not(target_os = "windows"))]
+                #[cfg(not(all(target_os = "windows", feature = "desktop")))]
                 connections: None,
             };
 
-            state::record_snapshot(snapshot.timestamp);
-            // 供 Web API 读取
-            if let Some(latest) = app.try_state::<LatestSnapshot>() {
-                // 不阻塞采样线程：尝试写入；失败则忽略
-                if let Ok(mut guard) = latest.0.try_write() {
-                    *guard = Some(snapshot.clone());
-                }
-            }
-            // 供 Web SSE 推送
-            if let Some(tx) = app.try_state::<SnapshotBroadcaster>() {
-                let _ = tx.0.send(snapshot.clone());
-            }
-            let _ = app.emit(constants::EVENT_SYSTEM_SNAPSHOT, snapshot);
+            on_snapshot(snapshot);
             thread::sleep(Duration::from_secs(1));
         }
     });

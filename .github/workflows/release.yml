@@ -101,3 +101,17 @@ jobs:
           releaseDraft: false
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           args: ${{ matrix.args }}
+
+      - name: Build headless agent (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          cd src-tauri
+          cargo build --release --no-default-features --features agent --bin network-watch-agent
+
+      - name: Upload headless agent to GitHub Release (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          files: |
+            src-tauri/target/release/network-watch-agent
