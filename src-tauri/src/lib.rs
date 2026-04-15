@@ -296,6 +296,7 @@ struct GuiNodeTarget {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct CapabilityResponse {
+    machine_id: Option<String>,
     role: String,
     ingest_url: String,
 }
@@ -325,6 +326,169 @@ fn start_udp_discovery_responder(discovery_port: u16, web_port: u16) {
                 let _ = socket.send_to(resp.as_bytes(), peer);
             }
         }
+    });
+}
+
+#[cfg(feature = "desktop")]
+fn start_gui_to_gui_relay(machine_id: String, latest: core::web_server::LatestSnapshot) {
+    let host_name = hostname::get()
+        .ok()
+        .and_then(|v| v.into_string().ok())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| machine_id.clone());
+    let host_ips = core::web_server::get_host_ips();
+    let label = host_name.clone();
+    let collector_url = std::env::var("NETWORK_WATCH_COLLECTOR").ok();
+    let timeout_secs = env_u64("NETWORK_WATCH_PUSH_TIMEOUT_SECS", 3);
+    let discovery_port = env_u16("NETWORK_WATCH_DISCOVERY_PORT", 17322);
+    let discovery_interval_secs = env_u64("NETWORK_WATCH_DISCOVERY_INTERVAL_SECS", 10);
+    let node_ttl_secs = env_u64("NETWORK_WATCH_NODE_TTL_SECS", 30);
+    let capability_path = std::env::var("NETWORK_WATCH_CAPABILITY_PATH")
+        .unwrap_or_else(|_| "/api/v1/capabilities".to_string());
+    let push_interval_secs = env_u64("NETWORK_WATCH_GUI_PUSH_INTERVAL_SECS", 2).clamp(1, 60);
+
+    let http_client = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        .build()
+        .expect("failed to create reqwest client for gui relay");
+
+    let gui_nodes: Arc<Mutex<HashMap<String, GuiNodeTarget>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // 发现线程：广播查找其它 GUI，并获取可用 ingest URL。
+    {
+        let gui_nodes = Arc::clone(&gui_nodes);
+        let http_client = http_client.clone();
+        let capability_path = capability_path.clone();
+        let self_machine_id = machine_id.clone();
+        thread::spawn(move || {
+            let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)) {
+                Ok(s) => s,
+                Err(err) => {
+                    eprintln!("[gui-relay-discovery] bind failed: {err}");
+                    return;
+                }
+            };
+            let _ = socket.set_broadcast(true);
+            let _ = socket.set_read_timeout(Some(Duration::from_millis(800)));
+            let mut buf = [0_u8; 512];
+
+            loop {
+                let _ = socket.send_to(
+                    DISCOVERY_REQUEST.as_bytes(),
+                    (Ipv4Addr::BROADCAST, discovery_port),
+                );
+
+                let started = Instant::now();
+                while started.elapsed() < Duration::from_secs(1) {
+                    let Ok((size, from)) = socket.recv_from(&mut buf) else {
+                        break;
+                    };
+                    let msg = String::from_utf8_lossy(&buf[..size]).to_string();
+                    if !msg.starts_with(DISCOVERY_RESPONSE_PREFIX) {
+                        continue;
+                    }
+                    let Some(port_str) = msg.split_whitespace().nth(1) else {
+                        continue;
+                    };
+                    let Ok(port) = port_str.parse::<u16>() else {
+                        continue;
+                    };
+                    let base_url = format!("http://{}:{}", from.ip(), port);
+                    let cap_url = format!(
+                        "{}{}",
+                        base_url.trim_end_matches('/'),
+                        if capability_path.starts_with('/') {
+                            capability_path.clone()
+                        } else {
+                            format!("/{}", capability_path)
+                        }
+                    );
+
+                    let Ok(resp) = http_client.get(&cap_url).send() else {
+                        continue;
+                    };
+                    let Ok(cap) = resp.json::<CapabilityResponse>() else {
+                        continue;
+                    };
+                    if cap.role != "desktop_gui" {
+                        continue;
+                    }
+                    if cap.machine_id.as_deref() == Some(self_machine_id.as_str()) {
+                        continue;
+                    }
+
+                    let ingest_url = if cap.ingest_url.starts_with("http://")
+                        || cap.ingest_url.starts_with("https://")
+                    {
+                        cap.ingest_url
+                    } else {
+                        format!(
+                            "{}{}",
+                            base_url.trim_end_matches('/'),
+                            if cap.ingest_url.starts_with('/') {
+                                cap.ingest_url
+                            } else {
+                                format!("/{}", cap.ingest_url)
+                            }
+                        )
+                    };
+
+                    if let Ok(mut map) = gui_nodes.lock() {
+                        map.insert(
+                            base_url,
+                            GuiNodeTarget {
+                                ingest_url,
+                                last_seen: Instant::now(),
+                            },
+                        );
+                    }
+                }
+
+                if let Ok(mut map) = gui_nodes.lock() {
+                    let ttl = Duration::from_secs(node_ttl_secs);
+                    map.retain(|_, node| node.last_seen.elapsed() <= ttl);
+                }
+                thread::sleep(Duration::from_secs(discovery_interval_secs));
+            }
+        });
+    }
+
+    // 推送线程：按周期将本机最新采样推送给发现到的 GUI 节点。
+    thread::spawn(move || loop {
+        let snapshot = latest.0.blocking_read().clone();
+        let Some(snapshot) = snapshot else {
+            thread::sleep(Duration::from_secs(push_interval_secs));
+            continue;
+        };
+
+        let body = serde_json::json!({
+            "machine_id": &machine_id,
+            "sender_role": "desktop_gui",
+            "host_name": &host_name,
+            "host_ips": &host_ips,
+            "label": &label,
+            "snapshot": snapshot,
+        });
+
+        let mut targets = Vec::<String>::new();
+        if let Ok(map) = gui_nodes.lock() {
+            for item in map.values() {
+                targets.push(item.ingest_url.clone());
+            }
+        }
+        if targets.is_empty() {
+            if let Some(url) = &collector_url {
+                targets.push(url.clone());
+            }
+        }
+
+        for url in targets {
+            if let Err(err) = http_client.post(&url).json(&body).send() {
+                eprintln!("[gui-relay] push failed {url}: {err}");
+            }
+        }
+
+        thread::sleep(Duration::from_secs(push_interval_secs));
     });
 }
 
@@ -448,7 +612,10 @@ pub fn run() {
                     let discovery_port = env_u16("NETWORK_WATCH_DISCOVERY_PORT", 17322);
                     start_udp_discovery_responder(discovery_port, parse_port(&bind));
                 }
-                core::web_server::start_web_server(latest, machines, tx, machine_id, bind);
+                core::web_server::start_web_server(latest.clone(), machines, tx, machine_id.clone(), bind);
+                if env_enabled("NETWORK_WATCH_GUI_RELAY", true) {
+                    start_gui_to_gui_relay(machine_id, latest);
+                }
             }
 
             core::sampler::start_sampler(app.app_handle().clone());
@@ -676,6 +843,7 @@ fn run_agent_mode() {
         }
         let body = serde_json::json!({
             "machine_id": &machine_id,
+            "sender_role": "agent",
             "host_name": &host_name,
             "host_ips": &host_ips,
             "label": &label,

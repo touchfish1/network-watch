@@ -66,6 +66,8 @@ struct SnapshotEnvelope {
 struct IngestEnvelope {
     machine_id: String,
     #[serde(default)]
+    sender_role: Option<String>,
+    #[serde(default)]
     host_name: Option<String>,
     #[serde(default)]
     host_ips: Option<Vec<String>>,
@@ -427,6 +429,21 @@ async fn ingest_snapshot(
     State(st): State<WebState>,
     Json(payload): Json<IngestEnvelope>,
 ) -> impl IntoResponse {
+    // 兼容 agent 与 gui 双向上报；旧版本未携带 sender_role 时也放行。
+    if let Some(sender_role) = payload
+        .sender_role
+        .as_deref()
+        .map(|v| v.trim().to_ascii_lowercase())
+    {
+        if sender_role != "agent" && sender_role != "desktop_gui" {
+            return (
+                StatusCode::FORBIDDEN,
+                "forbidden: ingest accepts agent/desktop_gui sender only",
+            )
+                .into_response();
+        }
+    }
+
     let storage_key = build_ingest_storage_key(&payload);
     let now_ms = history_store::now_ms();
     {
