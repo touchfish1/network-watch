@@ -7,6 +7,10 @@ pub const WINDOW_LABEL: &str = "main";
 /// 系统采样快照事件名（前端通过 event listener 订阅）。
 pub const EVENT_SYSTEM_SNAPSHOT: &str = "system-snapshot";
 
+/// 鼠标穿透开关变化（后端 → 前端，用于与托盘勾选、localStorage、页面按钮对齐）。
+#[cfg(target_os = "windows")]
+pub const EVENT_CLICK_THROUGH_CHANGED: &str = "click-through-changed";
+
 /// 托盘菜单：显示/隐藏主窗口。
 pub const MENU_TOGGLE_WINDOW: &str = "toggle-window";
 /// 托盘菜单：开机启动开关。

@@ -26,6 +26,9 @@ export const COLLAPSED_WIDTH_STORAGE_KEY = "network-watch-collapsed-width";
 export const EXPANDED_SIZE_STORAGE_KEY = "network-watch-expanded-size";
 export const CLICK_THROUGH_STORAGE_KEY = "network-watch-click-through";
 
+/** 与 `src-tauri/src/constants.rs` 中 `EVENT_CLICK_THROUGH_CHANGED` 一致（Windows）。 */
+export const CLICK_THROUGH_CHANGED_EVENT = "click-through-changed";
+
 export const MIN_EXPANDED_WIDTH = 300;
 export const MIN_EXPANDED_HEIGHT = 420;
 

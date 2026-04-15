@@ -107,3 +107,28 @@ export type RuntimeDiagnostics = {
   sampler_tick_count: number;
   last_snapshot_at_ms: number;
 };
+
+export type AlertRecord = {
+  id: string;
+  title: string;
+  message: string;
+  metric: "cpu" | "memory" | "download" | "upload" | "quota";
+  timestamp: number;
+};
+
+export type HistorySummary = {
+  last24HoursDownload: number;
+  last24HoursUpload: number;
+  last7DaysDownload: number;
+  last7DaysUpload: number;
+  peakDownload: number;
+  peakUpload: number;
+  sampleCount: number;
+};
+
+export type QuotaRuntime = {
+  periodKey: string;
+  usedBytes: number;
+  warningTriggered: boolean;
+  exceededTriggered: boolean;
+};

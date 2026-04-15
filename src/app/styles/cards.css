@@ -264,6 +264,11 @@
   color: var(--text-primary);
   font-size: 12px;
   font-weight: 700;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
 }
 
 .nic-card,

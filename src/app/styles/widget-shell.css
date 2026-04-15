@@ -38,15 +38,18 @@
 }
 
 .theme-cyberpunk {
-  --widget-bg-start: rgba(7, 11, 31, 0.97);
-  --widget-bg-end: rgba(13, 7, 28, 0.95);
-  --glow-a: rgba(53, 242, 255, 0.28);
-  --glow-b: rgba(255, 79, 216, 0.28);
-  --accent: #35f2ff;
-  --accent-strong: #ff4fd8;
-  --button-bg: linear-gradient(135deg, rgba(53, 242, 255, 0.28), rgba(255, 79, 216, 0.26));
-  --theme-ring: rgba(53, 242, 255, 0.48);
-  --font-display: "Orbitron", "Bahnschrift", sans-serif;
+  --widget-bg-start: rgba(9, 14, 24, 0.97);
+  --widget-bg-end: rgba(10, 16, 28, 0.95);
+  --glow-a: rgba(110, 168, 255, 0.12);
+  --glow-b: rgba(160, 174, 192, 0.08);
+  --accent: #6ea8ff;
+  --accent-strong: #90cdf4;
+  --accent-soft: rgba(110, 168, 255, 0.14);
+  --button-bg: rgba(255, 255, 255, 0.08);
+  --button-border: rgba(255, 255, 255, 0.14);
+  --button-text: rgba(246, 248, 255, 0.96);
+  --theme-ring: rgba(110, 168, 255, 0.32);
+  --font-display: "Bahnschrift", "Segoe UI", sans-serif;
 }
 
 .theme-japanese {
@@ -57,24 +60,24 @@
   --panel: rgba(255, 250, 241, 0.5);
   --panel-strong: rgba(255, 248, 235, 0.68);
   --panel-soft: rgba(255, 250, 241, 0.42);
-  --widget-bg-start: rgba(243, 234, 216, 0.98);
-  --widget-bg-end: rgba(228, 214, 191, 0.96);
-  --glow-a: rgba(34, 58, 94, 0.16);
-  --glow-b: rgba(194, 75, 60, 0.18);
-  --shadow: rgba(86, 59, 35, 0.22);
-  --accent: #223a5e;
-  --accent-strong: #c24b3c;
-  --accent-soft: rgba(34, 58, 94, 0.1);
-  --button-bg: linear-gradient(135deg, rgba(34, 58, 94, 0.18), rgba(194, 75, 60, 0.16));
+  --widget-bg-start: rgba(247, 250, 252, 0.98);
+  --widget-bg-end: rgba(237, 242, 247, 0.96);
+  --glow-a: rgba(43, 108, 176, 0.08);
+  --glow-b: rgba(113, 128, 150, 0.06);
+  --shadow: rgba(45, 55, 72, 0.18);
+  --accent: #2b6cb0;
+  --accent-strong: #2c5282;
+  --accent-soft: rgba(43, 108, 176, 0.08);
+  --button-bg: rgba(255, 255, 255, 0.65);
   --button-border: rgba(80, 61, 47, 0.18);
   --button-text: #251c13;
-  --theme-ring: rgba(194, 75, 60, 0.36);
-  --cpu: #223a5e;
-  --memory: #7f4d7f;
-  --download: #538e77;
-  --upload: #c9773c;
-  --font-main: "Yu Gothic UI", "Hiragino Sans GB", sans-serif;
-  --font-display: "Yu Mincho", "Microsoft YaHei UI", serif;
+  --theme-ring: rgba(43, 108, 176, 0.22);
+  --cpu: #2b6cb0;
+  --memory: #4a5568;
+  --download: #2f855a;
+  --upload: #c05621;
+  --font-main: "Segoe UI", "IBM Plex Sans", sans-serif;
+  --font-display: "Segoe UI Semibold", "Segoe UI", sans-serif;
 }
 
 .theme-chinese {
@@ -85,24 +88,24 @@
   --panel: rgba(255, 255, 255, 0.05);
   --panel-strong: rgba(255, 255, 255, 0.08);
   --panel-soft: rgba(255, 255, 255, 0.04);
-  --widget-bg-start: rgba(31, 24, 22, 0.98);
-  --widget-bg-end: rgba(78, 28, 26, 0.96);
-  --glow-a: rgba(47, 143, 131, 0.18);
-  --glow-b: rgba(216, 171, 79, 0.2);
-  --shadow: rgba(20, 13, 11, 0.34);
-  --accent: #d8ab4f;
-  --accent-strong: #b6413c;
-  --accent-soft: rgba(216, 171, 79, 0.12);
-  --button-bg: linear-gradient(135deg, rgba(182, 65, 60, 0.26), rgba(216, 171, 79, 0.22));
-  --button-border: rgba(216, 171, 79, 0.18);
-  --button-text: #fff7e6;
-  --theme-ring: rgba(216, 171, 79, 0.34);
-  --cpu: #d8ab4f;
-  --memory: #e685a7;
-  --download: #4dc4ae;
-  --upload: #ff9f6b;
-  --font-main: "Microsoft YaHei UI", "Noto Serif SC", sans-serif;
-  --font-display: "STZhongsong", "SimSun", serif;
+  --widget-bg-start: rgba(15, 23, 42, 0.98);
+  --widget-bg-end: rgba(26, 32, 44, 0.96);
+  --glow-a: rgba(47, 133, 90, 0.10);
+  --glow-b: rgba(160, 174, 192, 0.08);
+  --shadow: rgba(3, 8, 18, 0.32);
+  --accent: #2f855a;
+  --accent-strong: #38a169;
+  --accent-soft: rgba(47, 133, 90, 0.12);
+  --button-bg: rgba(255, 255, 255, 0.07);
+  --button-border: rgba(255, 255, 255, 0.14);
+  --button-text: rgba(252, 244, 232, 0.96);
+  --theme-ring: rgba(47, 133, 90, 0.28);
+  --cpu: #63b3ed;
+  --memory: #a0aec0;
+  --download: #68d391;
+  --upload: #f6ad55;
+  --font-main: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+  --font-display: "Microsoft YaHei UI", "Segoe UI", sans-serif;
 }
 
 .theme-western {
@@ -113,24 +116,24 @@
   --panel: rgba(255, 255, 255, 0.05);
   --panel-strong: rgba(255, 255, 255, 0.08);
   --panel-soft: rgba(255, 255, 255, 0.04);
-  --widget-bg-start: rgba(24, 31, 44, 0.98);
-  --widget-bg-end: rgba(76, 48, 33, 0.96);
-  --glow-a: rgba(28, 50, 84, 0.24);
-  --glow-b: rgba(214, 179, 106, 0.18);
-  --shadow: rgba(18, 11, 8, 0.36);
-  --accent: #d6b36a;
-  --accent-strong: #8c5a3c;
-  --accent-soft: rgba(214, 179, 106, 0.12);
-  --button-bg: linear-gradient(135deg, rgba(214, 179, 106, 0.24), rgba(140, 90, 60, 0.24));
-  --button-border: rgba(214, 179, 106, 0.14);
-  --button-text: #fff8ef;
-  --theme-ring: rgba(214, 179, 106, 0.32);
-  --cpu: #85b3ff;
-  --memory: #d9b6ff;
-  --download: #7fd0bb;
-  --upload: #f5bb7f;
-  --font-main: "Aptos", "Segoe UI", sans-serif;
-  --font-display: "Georgia", "Times New Roman", serif;
+  --widget-bg-start: rgba(11, 18, 32, 0.98);
+  --widget-bg-end: rgba(15, 23, 42, 0.96);
+  --glow-a: rgba(144, 205, 244, 0.10);
+  --glow-b: rgba(44, 82, 130, 0.08);
+  --shadow: rgba(3, 8, 18, 0.34);
+  --accent: #2c5282;
+  --accent-strong: #90cdf4;
+  --accent-soft: rgba(144, 205, 244, 0.10);
+  --button-bg: rgba(255, 255, 255, 0.07);
+  --button-border: rgba(255, 255, 255, 0.14);
+  --button-text: rgba(245, 236, 223, 0.95);
+  --theme-ring: rgba(144, 205, 244, 0.26);
+  --cpu: #90cdf4;
+  --memory: #a0aec0;
+  --download: #63b3ed;
+  --upload: #f6ad55;
+  --font-main: "Segoe UI", "IBM Plex Sans", sans-serif;
+  --font-display: "Segoe UI Semibold", "Segoe UI", sans-serif;
 }
 
 .widget {

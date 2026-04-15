@@ -1,18 +1,25 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { isTauri } from "@tauri-apps/api/core";
 
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
 import { setClickThroughEnabled } from "../tauri";
-import { CLICK_THROUGH_STORAGE_KEY } from "../constants";
+import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
+  defaultCardOrder,
+  defaultCardVisibility,
   loadCardOrder,
   loadCardVisibility,
+  saveCardOrder,
+  saveCardVisibility,
   type CardId,
 } from "../config/uiLayout";
 import { HeaderBar } from "./control-center/HeaderBar";
-import { openSettingsWindow } from "../tauri";
 import { OverviewCard } from "./control-center/OverviewCard";
+import { AlertSummaryCard } from "./control-center/AlertSummaryCard";
+import { HistorySummaryCard } from "./control-center/HistorySummaryCard";
 import { ConnectionsCard } from "./control-center/ConnectionsCard";
 import { NicCard } from "./control-center/NicCard";
 import { ProcessCard } from "./control-center/ProcessCard";
@@ -20,6 +27,8 @@ import { DiskCard } from "./control-center/DiskCard";
 import { ThemeCard } from "./control-center/ThemeCard";
 import { UpdateCard } from "./control-center/UpdateCard";
 import type { ControlCenterProps } from "./control-center/types";
+import { ControlCenterSettingsModal } from "./control-center/ControlCenterSettingsModal";
+import { emitAppEvent } from "../stateBus";
 
 /**
  * 展开态控制中心。
@@ -41,6 +50,18 @@ export function ControlCenter({
   theme,
   setTheme,
   updateState,
+  updatePollIntervalMinutes,
+  setUpdatePollIntervalMinutes,
+  nicPreference,
+  setNicPreference,
+  alertSettings,
+  setAlertSettings,
+  quotaSettings,
+  setQuotaSettings,
+  quotaRuntime,
+  alertRecords,
+  historySummary,
+  historySeries,
   onCheckOrInstallUpdate,
   onCollapse,
   onHeaderPointerDown,
@@ -53,7 +74,31 @@ export function ControlCenter({
     const saved = window.localStorage.getItem(CLICK_THROUGH_STORAGE_KEY);
     return saved === "1" || saved === "true";
   });
+  const [showSettingsPopover, setShowSettingsPopover] = useState(false);
   const updateCardRef = useRef<HTMLElement | null>(null);
+
+  /**
+   * 与托盘「鼠标穿透」菜单同步：后端在任意路径变更穿透后会广播该事件。
+   */
+  useEffect(() => {
+    if (!isTauri()) {
+      return;
+    }
+
+    let unlisten: (() => void) | undefined;
+    void listen<boolean>(CLICK_THROUGH_CHANGED_EVENT, ({ payload }) => {
+      const on = Boolean(payload);
+      setClickThroughEnabledState(on);
+      window.localStorage.setItem(CLICK_THROUGH_STORAGE_KEY, on ? "1" : "0");
+      emitAppEvent("app:click-through-changed", on);
+    }).then((fn) => {
+      unlisten = fn;
+    });
+
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const toggleClickThrough = useCallback(() => {
     const next = !clickThroughEnabled;
@@ -68,19 +113,62 @@ export function ControlCenter({
     updateCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }, []);
   const hasUpdate = updateState.stage === "available";
-  const openSettings = useCallback(() => {
-    void openSettingsWindow().catch(() => {
-      // ignore
+  const toggleSettingsPopover = useCallback(() => {
+    setShowSettingsPopover((current) => !current);
+  }, []);
+  const closeSettingsPopover = useCallback(() => {
+    setShowSettingsPopover(false);
+  }, []);
+
+  const [cardOrder, setCardOrder] = useState<CardId[]>(() => loadCardOrder());
+  const [cardVisibility, setCardVisibility] = useState<Record<CardId, boolean>>(() => loadCardVisibility());
+
+  const toggleCard = useCallback((id: CardId) => {
+    setCardVisibility((current) => {
+      const next = { ...current, [id]: !current[id] };
+      saveCardVisibility(next);
+      return next;
     });
   }, []);
 
-  const [cardOrder] = useState<CardId[]>(() => loadCardOrder());
-  const [cardVisibility] = useState<Record<CardId, boolean>>(() => loadCardVisibility());
+  const moveCard = useCallback((id: CardId, direction: -1 | 1) => {
+    setCardOrder((current) => {
+      const index = current.indexOf(id);
+      if (index < 0) {
+        return current;
+      }
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      const next = [...current];
+      const [item] = next.splice(index, 1);
+      next.splice(nextIndex, 0, item);
+      saveCardOrder(next);
+      return next;
+    });
+  }, []);
+
+  const resetCards = useCallback(() => {
+    setCardOrder(defaultCardOrder);
+    setCardVisibility(defaultCardVisibility);
+    saveCardOrder(defaultCardOrder);
+    saveCardVisibility(defaultCardVisibility);
+  }, []);
 
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
+    alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
+    history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
     connections: () => <ConnectionsCard connections={snapshot.connections} />,
-    nic: () => <NicCard nics={snapshot.nics} activeNicId={snapshot.active_nic_id} />,
+    nic: () => (
+      <NicCard
+        nics={snapshot.nics}
+        activeNicId={snapshot.active_nic_id}
+        nicPreference={nicPreference}
+        setNicPreference={setNicPreference}
+      />
+    ),
     process: () => (
       <ProcessCard processCount={snapshot.process_count} topCpu={snapshot.top_processes_cpu} topMemory={snapshot.top_processes_memory} />
     ),
@@ -108,12 +196,39 @@ export function ControlCenter({
         onToggleClickThrough={toggleClickThrough}
         onScrollToUpdateCard={scrollToUpdateCard}
         settingsMenu={
-          <button type="button" className="expand-button" data-tauri-drag-region="false" onClick={openSettings}>
+          <button
+            type="button"
+            className={`expand-button ${showSettingsPopover ? "primary-action-hot" : ""}`}
+            data-tauri-drag-region="false"
+            onClick={toggleSettingsPopover}
+          >
             设置
           </button>
         }
         onCollapse={onCollapse}
         onHeaderPointerDown={onHeaderPointerDown}
+      />
+      <ControlCenterSettingsModal
+        open={showSettingsPopover}
+        onClose={closeSettingsPopover}
+        nicPreference={nicPreference}
+        setNicPreference={setNicPreference}
+        updatePollIntervalMinutes={updatePollIntervalMinutes}
+        setUpdatePollIntervalMinutes={setUpdatePollIntervalMinutes}
+        alertSettings={alertSettings}
+        setAlertSettings={setAlertSettings}
+        quotaSettings={quotaSettings}
+        setQuotaSettings={setQuotaSettings}
+        quotaRuntime={quotaRuntime}
+        alertRecords={alertRecords}
+        historySummary={historySummary}
+        historySeries={historySeries}
+        snapshot={{ nics: snapshot.nics, active_nic_id: snapshot.active_nic_id }}
+        cardOrder={cardOrder}
+        cardVisibility={cardVisibility}
+        onResetCards={resetCards}
+        onToggleCard={toggleCard}
+        onMoveCard={moveCard}
       />
 
       <section className="settings-panel">

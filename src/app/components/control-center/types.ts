@@ -1,7 +1,7 @@
 import type React from "react";
 
-import type { ThemeId, UpdateState } from "../../types";
-import type { UpdatePollIntervalMinutes } from "../../config/settings";
+import type { AlertRecord, HistorySummary, QuotaRuntime, ThemeId, UpdateState } from "../../types";
+import type { AlertSettings, NicPreference, QuotaSettings, UpdatePollIntervalMinutes } from "../../config/settings";
 
 export type ControlCenterSnapshot = {
   cpu_usage: number;
@@ -65,6 +65,19 @@ export type ControlCenterProps = {
   updateState: UpdateState;
   updatePollIntervalMinutes: UpdatePollIntervalMinutes;
   setUpdatePollIntervalMinutes: (next: UpdatePollIntervalMinutes) => void;
+  nicPreference: NicPreference;
+  setNicPreference: (next: NicPreference) => void;
+  alertSettings: AlertSettings;
+  setAlertSettings: (next: AlertSettings) => void;
+  quotaSettings: QuotaSettings;
+  setQuotaSettings: (next: QuotaSettings) => void;
+  quotaRuntime: QuotaRuntime;
+  alertRecords: AlertRecord[];
+  historySummary: HistorySummary;
+  historySeries: {
+    downloadPerMinute: number[];
+    uploadPerMinute: number[];
+  };
   onCheckOrInstallUpdate: () => void;
   onCollapse: () => void;
   onHeaderPointerDown: (event: React.PointerEvent<HTMLElement>) => void;

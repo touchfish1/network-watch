@@ -9,6 +9,8 @@
 //!
 //! 前端通过 `invoke` 调用少量命令（例如切换 overlay 交互性），并通过事件订阅接收采样快照。
 mod constants;
+#[cfg(target_os = "windows")]
+mod click_through_bus;
 mod diagnostics;
 mod overlay;
 mod sampler;
@@ -18,11 +20,47 @@ mod windowing;
 #[cfg(target_os = "windows")]
 mod windows_connections;
 
-use tauri::Manager;
+use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 use diagnostics::get_runtime_diagnostics;
 use overlay::set_overlay_interactive;
 #[cfg(target_os = "windows")]
 use overlay::set_click_through_enabled;
+
+#[tauri::command]
+fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::Result<()> {
+    if let Some(existing) = app.get_webview_window("settings") {
+        let _ = existing.set_always_on_top(true);
+        let _ = existing.show();
+        let _ = existing.set_focus();
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        "settings",
+        WebviewUrl::App("/?window=settings".into()),
+    )
+    .title("设置 - Network Watch")
+    .inner_size(520.0, 680.0)
+    .min_inner_size(420.0, 520.0)
+    .resizable(true)
+    .decorations(true)
+    .visible(true)
+    .center()
+    .always_on_top(true)
+    .build()?;
+
+    let _ = window.set_focus();
+    Ok(())
+}
+
+#[tauri::command]
+fn close_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("settings") {
+        window.close()?;
+    }
+    Ok(())
+}
 
 /// 启动并运行 Tauri 应用（后端主入口）。
 ///
@@ -47,6 +85,8 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             set_overlay_interactive,
+            open_settings_window,
+            close_settings_window,
             get_runtime_diagnostics,
             #[cfg(target_os = "windows")]
             set_click_through_enabled

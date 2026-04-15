@@ -1,15 +1,36 @@
 import { CLICK_THROUGH_STORAGE_KEY } from "../constants";
 
-export type CardId = "overview" | "connections" | "nic" | "process" | "disk" | "theme" | "update";
+export type CardId =
+  | "overview"
+  | "alerts"
+  | "history"
+  | "connections"
+  | "nic"
+  | "process"
+  | "disk"
+  | "theme"
+  | "update";
 export type StatusItemId = "cpu" | "mem" | "down" | "up" | "active_nic" | "disk" | "connections";
 
 const CARD_ORDER_KEY = "network-watch-card-order-v1";
 const CARD_VISIBILITY_KEY = "network-watch-card-visibility-v1";
 const STATUS_VISIBILITY_KEY = "network-watch-status-visibility-v1";
 
-export const defaultCardOrder: CardId[] = ["overview", "connections", "nic", "process", "disk", "theme", "update"];
+export const defaultCardOrder: CardId[] = [
+  "overview",
+  "alerts",
+  "history",
+  "connections",
+  "nic",
+  "process",
+  "disk",
+  "theme",
+  "update",
+];
 export const defaultCardVisibility: Record<CardId, boolean> = {
   overview: true,
+  alerts: true,
+  history: true,
   connections: true,
   nic: true,
   process: true,

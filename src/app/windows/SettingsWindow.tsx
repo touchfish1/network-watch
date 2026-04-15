@@ -1,6 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { closeSettingsWindow } from "../tauri";
+
 import { THEME_STORAGE_KEY } from "../constants";
 import {
   formatIntervalLabel,
@@ -38,7 +40,17 @@ export function SettingsWindow() {
   const [cardVisibility, setCardVisibility] = useState<Record<CardId, boolean>>(() => loadCardVisibility());
 
   const closeWindow = useCallback(() => {
-    void getCurrentWindow().close();
+    void (async () => {
+      try {
+        await closeSettingsWindow();
+      } catch {
+        try {
+          await getCurrentWindow().close();
+        } catch {
+          // ignore
+        }
+      }
+    })();
   }, []);
 
   const onIntervalChange = useCallback((minutes: UpdatePollIntervalMinutes) => {

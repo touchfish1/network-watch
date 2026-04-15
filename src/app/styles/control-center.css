@@ -46,6 +46,15 @@
   background: color-mix(in srgb, var(--accent) 48%, transparent);
 }
 
+.settings-modal-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-modal-panel::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 48%, transparent);
+}
+
 .widget-header {
   display: flex;
   align-items: center;
@@ -65,7 +74,9 @@
 }
 
 .settings-popover,
-.settings-popover * {
+.settings-popover *,
+.settings-modal,
+.settings-modal * {
   -webkit-app-region: no-drag;
 }
 
@@ -105,7 +116,99 @@
   margin-left: 8px;
 }
 
-/* 旧的内嵌设置弹层已改为独立窗口（SettingsWindow）。 */
+.settings-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px 14px 24px;
+  background: rgba(4, 8, 18, 0.52);
+  backdrop-filter: blur(8px);
+}
+
+.settings-modal-panel {
+  width: min(100%, 720px);
+  max-height: calc(100vh - 80px);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: linear-gradient(180deg, var(--widget-bg-start), var(--widget-bg-end));
+  box-shadow:
+    0 24px 48px var(--shadow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.settings-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-modal-header strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.settings-modal-content {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settings-modal-body {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px 0;
+}
+
+.settings-tab {
+  border: 1px solid var(--button-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--button-bg);
+  color: var(--button-text);
+  cursor: pointer;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.settings-tab:hover {
+  transform: translateY(-1px);
+}
+
+.settings-tab-active {
+  box-shadow: 0 0 0 1px var(--theme-ring), 0 10px 24px var(--accent-soft);
+}
+
+.settings-card-full {
+  grid-column: 1 / -1;
+}
+
+.settings-number-input {
+  width: 72px;
+  padding: 4px 8px;
+  border: 1px solid var(--button-border);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  color: var(--text-primary);
+}
 
 .settings-popover-options {
   display: flex;
@@ -247,6 +350,7 @@
 }
 
 @media (max-width: 380px) {
+  .settings-modal-content,
   .settings-panel {
     grid-template-columns: 1fr;
   }

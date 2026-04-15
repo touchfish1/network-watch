@@ -1,4 +1,5 @@
 import { formatCompactRate } from "../../utils";
+import type { NicPreference } from "../../config/settings";
 
 type NicCardProps = {
   nics: Array<{
@@ -7,10 +8,13 @@ type NicCardProps = {
     transmitted: number;
   }>;
   activeNicId: string | null;
+  nicPreference: NicPreference;
+  setNicPreference: (next: NicPreference) => void;
 };
 
-export function NicCard({ nics, activeNicId }: NicCardProps) {
-  const activeNic = activeNicId ? nics.find((nic) => nic.id === activeNicId) ?? null : null;
+export function NicCard({ nics, activeNicId, nicPreference, setNicPreference }: NicCardProps) {
+  const effectiveNicId = nicPreference.mode === "manual" ? nicPreference.nicId : activeNicId;
+  const activeNic = effectiveNicId ? nics.find((nic) => nic.id === effectiveNicId) ?? null : null;
   const topNics = [...nics].sort((a, b) => b.received + b.transmitted - (a.received + a.transmitted)).slice(0, 4);
 
   return (
@@ -21,6 +25,25 @@ export function NicCard({ nics, activeNicId }: NicCardProps) {
           <strong>多网卡实时速率</strong>
         </div>
         <span className="theme-current">{activeNic?.id ?? "—"}</span>
+      </div>
+      <div className="settings-popover-options">
+        <button
+          type="button"
+          className={`settings-option ${nicPreference.mode === "auto" ? "settings-option-active" : ""}`}
+          onClick={() => setNicPreference({ mode: "auto", nicId: null })}
+        >
+          自动选择
+        </button>
+        {topNics.map((nic) => (
+          <button
+            key={`nic-pref-${nic.id}`}
+            type="button"
+            className={`settings-option ${nicPreference.mode === "manual" && nicPreference.nicId === nic.id ? "settings-option-active" : ""}`}
+            onClick={() => setNicPreference({ mode: "manual", nicId: nic.id })}
+          >
+            {nic.id}
+          </button>
+        ))}
       </div>
       <div className="kv-table">
         {topNics.length ? (

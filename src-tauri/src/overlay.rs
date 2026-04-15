@@ -124,16 +124,23 @@ pub fn set_overlay_interactive<R: Runtime>(
     Ok(())
 }
 
+/// 应用鼠标穿透开关（Windows）：更新状态、重绘窗口样式、同步托盘勾选并通知前端。
+#[cfg(target_os = "windows")]
+pub fn apply_click_through_setting<R: Runtime>(app: &tauri::AppHandle<R>, enabled: bool) {
+    state::set_click_through_enabled(enabled);
+    if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
+        apply_overlay_mode(&window, state::overlay_interactive());
+    }
+    crate::click_through_bus::notify_click_through_changed(app, enabled);
+}
+
 /// 设置鼠标穿透开关（Windows）。
 ///
 /// 返回值为最终状态，便于前端与托盘 UI 同步。
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn set_click_through_enabled<R: Runtime>(app: tauri::AppHandle<R>, enabled: bool) -> tauri::Result<bool> {
-    state::set_click_through_enabled(enabled);
-    if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
-        apply_overlay_mode(&window, state::overlay_interactive());
-    }
+    apply_click_through_setting(&app, enabled);
     Ok(state::click_through_enabled())
 }
 

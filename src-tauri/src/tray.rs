@@ -9,7 +9,7 @@
 //! - 窗口显示/隐藏由 `windowing` 模块统一处理
 
 use tauri::{
-    AppHandle, Manager,
+    AppHandle,
     menu::{CheckMenuItem, CheckMenuItemBuilder, MenuBuilder, MenuEvent, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
@@ -18,7 +18,7 @@ use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
 use crate::{constants, windowing};
 #[cfg(target_os = "windows")]
-use crate::{overlay, state};
+use crate::{click_through_bus, overlay, state};
 
 /// 创建托盘与菜单，并绑定事件处理。
 ///
@@ -36,6 +36,9 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
         .id(constants::MENU_CLICK_THROUGH)
         .checked(state::click_through_enabled())
         .build(app)?;
+
+    #[cfg(target_os = "windows")]
+    click_through_bus::register_click_through_menu_item(app, &click_through_item);
 
     let mut menu_builder = MenuBuilder::new(app)
         .item(
@@ -114,14 +117,9 @@ fn handle_menu_event<R: tauri::Runtime>(
 }
 
 #[cfg(target_os = "windows")]
-fn toggle_click_through<R: tauri::Runtime>(app: &AppHandle<R>, click_through_item: &CheckMenuItem<R>) {
-    let enabled = state::click_through_enabled();
-    let next_enabled = !enabled;
-    state::set_click_through_enabled(next_enabled);
-    if let Some(window) = app.get_webview_window(constants::WINDOW_LABEL) {
-        overlay::apply_overlay_mode(&window, state::overlay_interactive());
-    }
-    let _ = click_through_item.set_checked(next_enabled);
+fn toggle_click_through<R: tauri::Runtime>(app: &AppHandle<R>, _click_through_item: &CheckMenuItem<R>) {
+    let next_enabled = !state::click_through_enabled();
+    overlay::apply_click_through_setting(app, next_enabled);
 }
 
 /// 切换开机启动，并同步菜单勾选状态。
