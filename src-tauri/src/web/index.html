@@ -98,6 +98,15 @@
       </div>
     </section>
 
+    <section class="card">
+      <div class="k" style="margin-bottom:8px">主机关系图（agent → 本 GUI）</div>
+      <div class="s muted" id="graph_meta">等待数据…</div>
+      <div style="margin-top:10px; overflow:auto">
+        <svg id="host_graph" width="920" height="360" viewBox="0 0 920 360" role="img" aria-label="主机关系图"></svg>
+      </div>
+      <div class="s muted" style="margin-top:10px" id="graph_list">—</div>
+    </section>
+
     <details>
       <summary>原始快照（JSON）</summary>
       <div class="details-body">
@@ -224,6 +233,18 @@
     function esc(s) {
       return String(s).replace(/[&<>\"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;" }[c]));
     }
+    function ellipsize(s, max) {
+      const t = String(s || "");
+      if (t.length <= max) return t;
+      return t.slice(0, Math.max(0, max - 1)) + "…";
+    }
+    function pickLabel(machineId, val) {
+      if (val && typeof val === "object") {
+        if (typeof val.label === "string" && val.label.trim()) return val.label.trim();
+        if (typeof val.host_name === "string" && val.host_name.trim()) return val.host_name.trim();
+      }
+      return machineId;
+    }
     let selectedMachineId = null;
     let selectedMachineSnapshot = null;
     function applySelectedMachine() {
@@ -305,6 +326,106 @@
         meta.textContent = "拉取失败（/api/v1/machines）";
       }
     }
+
+    function renderGraph(entries) {
+      const svg = document.getElementById("host_graph");
+      const meta = document.getElementById("graph_meta");
+      const list = document.getElementById("graph_list");
+      if (!svg || !meta || !list) return;
+
+      const guiMachineId = "__MACHINE_ID__";
+      const guiName = "__HOST_NAME__";
+      const guiLabel = guiName && guiName !== "—" ? guiName : guiMachineId;
+
+      const agents = entries.map(([id, val]) => {
+        const hostName = getHostName(val) || id;
+        const hostIps = getHostIps(val);
+        const label = pickLabel(id, val);
+        const receivedAt = getReceivedAtMs(val) || 0;
+        return { id, hostName, hostIps, label, receivedAt };
+      }).sort((a, b) => b.receivedAt - a.receivedAt);
+
+      meta.textContent = "GUI: " + guiLabel + " · agent 数量 " + agents.length + " · 点击表格可切换指标";
+
+      // 清空
+      while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+      const W = 920, H = 360;
+      const cx = W / 2, cy = H / 2;
+      const r = Math.min(W, H) * 0.34;
+
+      // 线条
+      for (let i = 0; i < agents.length; i++) {
+        const ang = (Math.PI * 2 * i) / Math.max(1, agents.length) - Math.PI / 2;
+        const x = cx + r * Math.cos(ang);
+        const y = cy + r * Math.sin(ang);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", String(cx));
+        line.setAttribute("y1", String(cy));
+        line.setAttribute("x2", String(x));
+        line.setAttribute("y2", String(y));
+        line.setAttribute("stroke", "rgba(255,255,255,0.14)");
+        line.setAttribute("stroke-width", "1");
+        svg.appendChild(line);
+      }
+
+      // GUI 节点
+      const guiCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      guiCircle.setAttribute("cx", String(cx));
+      guiCircle.setAttribute("cy", String(cy));
+      guiCircle.setAttribute("r", "28");
+      guiCircle.setAttribute("fill", "rgba(56,189,248,0.24)");
+      guiCircle.setAttribute("stroke", "rgba(56,189,248,0.65)");
+      guiCircle.setAttribute("stroke-width", "2");
+      svg.appendChild(guiCircle);
+
+      const guiText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      guiText.setAttribute("x", String(cx));
+      guiText.setAttribute("y", String(cy + 5));
+      guiText.setAttribute("text-anchor", "middle");
+      guiText.setAttribute("font-size", "12");
+      guiText.setAttribute("fill", "rgba(255,255,255,0.9)");
+      guiText.textContent = ellipsize(guiLabel, 18);
+      svg.appendChild(guiText);
+
+      // agent 节点
+      for (let i = 0; i < agents.length; i++) {
+        const a = agents[i];
+        const ang = (Math.PI * 2 * i) / Math.max(1, agents.length) - Math.PI / 2;
+        const x = cx + r * Math.cos(ang);
+        const y = cy + r * Math.sin(ang);
+
+        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        c.setAttribute("cx", String(x));
+        c.setAttribute("cy", String(y));
+        c.setAttribute("r", "16");
+        c.setAttribute("fill", "rgba(255,255,255,0.06)");
+        c.setAttribute("stroke", "rgba(255,255,255,0.16)");
+        c.setAttribute("stroke-width", "1");
+        svg.appendChild(c);
+
+        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("x", String(x));
+        t.setAttribute("y", String(y + 4));
+        t.setAttribute("text-anchor", "middle");
+        t.setAttribute("font-size", "10");
+        t.setAttribute("fill", "rgba(255,255,255,0.88)");
+        t.textContent = ellipsize(a.label, 10);
+        svg.appendChild(t);
+      }
+
+      if (agents.length === 0) {
+        list.textContent = "暂无 agent 上报到该 GUI。";
+      } else {
+        const lines = agents.slice(0, 20).map((a) => {
+          const ips = a.hostIps && a.hostIps.length ? a.hostIps.join(" / ") : "—";
+          return `${a.label}  ·  ${ips}`;
+        });
+        list.textContent = lines.join("\n");
+        list.classList.add("mono");
+        list.style.whiteSpace = "pre-wrap";
+      }
+    }
     async function boot() {
       try {
         const res = await fetch("/api/v1/snapshot");
@@ -322,7 +443,20 @@
         } catch {}
       };
       refreshCluster();
+      // 关系图与集群共享同一份数据源：/api/v1/machines
+      try {
+        const res = await fetch("/api/v1/machines");
+        const data = await res.json();
+        renderGraph(Object.entries(data || {}));
+      } catch {}
       setInterval(refreshCluster, 2000);
+      setInterval(async () => {
+        try {
+          const res = await fetch("/api/v1/machines");
+          const data = await res.json();
+          renderGraph(Object.entries(data || {}));
+        } catch {}
+      }, 2000);
     }
     boot();
   </script>

@@ -401,7 +401,34 @@ fn run_agent_mode() {
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| machine_id.clone());
     let host_ips = core::web_server::get_host_ips();
-    let label = crate::agent::label_cmd::get_or_create_label(&host_name);
+    let label = {
+        #[cfg(feature = "agent")]
+        {
+            crate::agent::label_cmd::get_or_create_label(&host_name)
+        }
+        #[cfg(not(feature = "agent"))]
+        {
+            // 桌面-only 构建下不含 agent 模块：给一个不持久化的兜底 label，避免编译失败。
+            fn random_suffix_5() -> String {
+                use std::time::{SystemTime, UNIX_EPOCH};
+                let nanos = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as u64)
+                    .unwrap_or(0);
+                let pid = std::process::id() as u64;
+                let mut x = nanos ^ (pid.rotate_left(17)) ^ (nanos >> 7);
+                let mut out = String::new();
+                for _ in 0..5 {
+                    x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    let v = (x % 36) as u8;
+                    let c = if v < 10 { (b'0' + v) as char } else { (b'a' + (v - 10)) as char };
+                    out.push(c);
+                }
+                out
+            }
+            format!("{}-{}", host_name, random_suffix_5())
+        }
+    };
     let timeout_secs = std::env::var("NETWORK_WATCH_PUSH_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())

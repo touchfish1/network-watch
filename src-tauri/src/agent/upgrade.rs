@@ -3,6 +3,7 @@
 use reqwest::blocking::Client;
 use semver::Version;
 use serde::Deserialize;
+use std::process::Command;
 
 /// 与 `tauri.conf.json` / 现有 Release 流程一致；可用 `NETWORK_WATCH_AGENT_GITHUB_REPO` 覆盖（`owner/repo`）。
 const DEFAULT_GITHUB_REPO: &str = "touchfish1/network-watch";
@@ -11,8 +12,15 @@ fn github_repo() -> String {
     std::env::var("NETWORK_WATCH_AGENT_GITHUB_REPO").unwrap_or_else(|_| DEFAULT_GITHUB_REPO.to_string())
 }
 
-/// Release 中与当前构建类型对应的资源文件名（CI 上传名）。
-pub fn release_asset_filename() -> &'static str {
+/// Release 中 agent 压缩包文件名（CI 上传名）。
+///
+/// 约定：`network-watch-agent-<version>.tar.gz`
+pub fn release_asset_filename_for(version: &Version) -> String {
+    format!("network-watch-agent-{}.tar.gz", version)
+}
+
+/// 压缩包解压后的二进制名称（与当前构建类型匹配）。
+fn packaged_binary_name() -> &'static str {
     if cfg!(target_env = "musl") {
         "network-watch-agent-musl"
     } else {
@@ -74,7 +82,7 @@ pub fn check_update_available() -> Result<Option<(Version, String, String)>, Str
     if remote_v <= cur {
         return Ok(None);
     }
-    let want = release_asset_filename();
+    let want = release_asset_filename_for(&remote_v);
     let asset = rel
         .assets
         .iter()
@@ -107,7 +115,10 @@ pub fn run_upgrade(dry_run: bool) -> Result<(), String> {
         return Ok(());
     };
 
-    eprintln!("[upgrade] 发现新版本 {tag}，将下载: {}", release_asset_filename());
+    eprintln!(
+        "[upgrade] 发现新版本 {tag}，将下载: {}",
+        release_asset_filename_for(&_remote_v)
+    );
     if dry_run {
         eprintln!("[upgrade] dry-run: {download_url}");
         return Ok(());
@@ -128,12 +139,51 @@ pub fn run_upgrade(dry_run: bool) -> Result<(), String> {
         .file_name()
         .and_then(|s| s.to_str())
         .unwrap_or("network-watch-agent");
-    let tmp = parent.join(format!("{stem}.part"));
+    let archive_tmp = parent.join(format!("{stem}.part.tar.gz"));
+    if archive_tmp.exists() {
+        let _ = std::fs::remove_file(&archive_tmp);
+    }
+    std::fs::write(&archive_tmp, bytes).map_err(|e| format!("写入压缩包失败: {e}"))?;
 
+    let extract_root = std::env::temp_dir().join(format!(
+        "network-watch-agent-upgrade-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or_default()
+    ));
+    std::fs::create_dir_all(&extract_root).map_err(|e| format!("创建临时目录失败: {e}"))?;
+
+    let tar_status = Command::new("tar")
+        .arg("-xzf")
+        .arg(&archive_tmp)
+        .arg("-C")
+        .arg(&extract_root)
+        .status()
+        .map_err(|e| format!("执行 tar 解压失败: {e}"))?;
+    if !tar_status.success() {
+        let _ = std::fs::remove_file(&archive_tmp);
+        let _ = std::fs::remove_dir_all(&extract_root);
+        return Err("解压失败：tar 返回非 0".to_string());
+    }
+
+    let pkg_dir = extract_root.join(format!("network-watch-agent-{}", tag.trim_start_matches('v')));
+    let extracted_bin = pkg_dir.join(packaged_binary_name());
+    if !extracted_bin.exists() {
+        let _ = std::fs::remove_file(&archive_tmp);
+        let _ = std::fs::remove_dir_all(&extract_root);
+        return Err(format!(
+            "压缩包中未找到目标二进制: {}",
+            extracted_bin.display()
+        ));
+    }
+
+    let tmp = parent.join(format!("{stem}.part"));
     if tmp.exists() {
         let _ = std::fs::remove_file(&tmp);
     }
-    std::fs::write(&tmp, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    std::fs::copy(&extracted_bin, &tmp).map_err(|e| format!("拷贝新二进制失败: {e}"))?;
 
     #[cfg(unix)]
     {
@@ -146,6 +196,8 @@ pub fn run_upgrade(dry_run: bool) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         format!("替换二进制失败（可先停止 agent 再试）: {e}")
     })?;
+    let _ = std::fs::remove_file(&archive_tmp);
+    let _ = std::fs::remove_dir_all(&extract_root);
 
     eprintln!("[upgrade] 已写入 {tag}；若进程仍在运行，请重启服务或再次执行本程序以加载新版本。");
     Ok(())

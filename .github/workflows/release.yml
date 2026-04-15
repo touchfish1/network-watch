@@ -144,15 +144,21 @@ jobs:
 
       - name: Stage agent artifacts for release
         run: |
-          mkdir -p dist-agent
-          cp src-tauri/target/release/network-watch-agent dist-agent/network-watch-agent
-          cp src-tauri/target/x86_64-unknown-linux-musl/release/network-watch-agent dist-agent/network-watch-agent-musl
-          chmod +x dist-agent/network-watch-agent dist-agent/network-watch-agent-musl
+          TAG_NAME="${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}"
+          VERSION="${TAG_NAME#v}"
+          PKG_DIR_NAME="network-watch-agent-${VERSION}"
+          PKG_FILE_NAME="${PKG_DIR_NAME}.tar.gz"
 
-      - name: Upload agent binaries to GitHub Release
+          mkdir -p dist-agent
+          mkdir -p "dist-agent/${PKG_DIR_NAME}"
+          cp src-tauri/target/release/network-watch-agent "dist-agent/${PKG_DIR_NAME}/network-watch-agent"
+          cp src-tauri/target/x86_64-unknown-linux-musl/release/network-watch-agent "dist-agent/${PKG_DIR_NAME}/network-watch-agent-musl"
+          chmod +x "dist-agent/${PKG_DIR_NAME}/network-watch-agent" "dist-agent/${PKG_DIR_NAME}/network-watch-agent-musl"
+          tar -C dist-agent -czf "dist-agent/${PKG_FILE_NAME}" "${PKG_DIR_NAME}"
+
+      - name: Upload agent package to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           files: |
-            dist-agent/network-watch-agent
-            dist-agent/network-watch-agent-musl
+            dist-agent/network-watch-agent-*.tar.gz
