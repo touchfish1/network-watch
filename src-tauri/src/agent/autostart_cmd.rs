@@ -155,11 +155,10 @@ pub fn run_autostart(enable: bool, disable: bool, status: bool) -> Result<(), St
         return Ok(());
     }
 
-    run_systemctl_user(&["disable", "--now", SERVICE_NAME]).or_else(|e| {
-        // 若服务此前未启用，继续清理文件，不让用户被中断。
+    if let Err(e) = run_systemctl_user(&["disable", "--now", SERVICE_NAME]) {
+        // 若服务此前未启用/未运行，继续清理文件，不让用户被中断。
         eprintln!("{e}");
-        Ok::<(), String>(())
-    })?;
+    }
     if service.exists() {
         fs::remove_file(&service).map_err(|e| format!("删除 service 文件失败: {e}"))?;
     }
