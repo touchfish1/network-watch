@@ -40,7 +40,16 @@ pub fn build_tray(app: &mut tauri::App) -> tauri::Result<()> {
     #[cfg(target_os = "windows")]
     click_through_bus::register_click_through_menu_item(app, &click_through_item);
 
+    #[cfg(target_os = "windows")]
     let mut menu_builder = MenuBuilder::new(app)
+        .item(
+            &MenuItemBuilder::new("显示 / 隐藏")
+                .id(constants::MENU_TOGGLE_WINDOW)
+                .build(app)?,
+        )
+        .item(&autostart_item);
+    #[cfg(not(target_os = "windows"))]
+    let menu_builder = MenuBuilder::new(app)
         .item(
             &MenuItemBuilder::new("显示 / 隐藏")
                 .id(constants::MENU_TOGGLE_WINDOW)

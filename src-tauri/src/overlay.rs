@@ -10,9 +10,12 @@
 //! - `focusable(false)` 在部分情况下会导致窗口**完全收不到鼠标事件**，从而无法点击展开。
 //! - 因此我们保持窗口 focusable，并用 `SWP_NOACTIVATE`（搭配前端 blur 处理）降低抢焦点的副作用。
 
-use std::{thread, time::Duration};
+use tauri::{Manager, Runtime};
 
-use tauri::{AppHandle, Manager, Runtime};
+#[cfg(target_os = "windows")]
+use std::{thread, time::Duration};
+#[cfg(target_os = "windows")]
+use tauri::AppHandle;
 
 use crate::{constants, state};
 

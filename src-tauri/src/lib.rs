@@ -17,6 +17,7 @@ mod sampler;
 mod state;
 mod tray;
 mod windowing;
+mod web_server;
 #[cfg(target_os = "windows")]
 mod windows_connections;
 
@@ -94,6 +95,25 @@ pub fn run() {
         .setup(|app| {
             tray::build_tray(app)?;
             windowing::initialize_window(app.app_handle());
+            // Web 监控服务（可选）：默认开启，端口可用环境变量覆盖
+            // - NETWORK_WATCH_WEB=0 关闭
+            // - NETWORK_WATCH_WEB_BIND=127.0.0.1:17321 覆盖绑定地址
+            let web_enabled = std::env::var("NETWORK_WATCH_WEB")
+                .ok()
+                .map(|v| v != "0" && v.to_ascii_lowercase() != "false")
+                .unwrap_or(true);
+            let machine_id = std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "local".to_string());
+            let (latest, tx) = web_server::new_state();
+            app.manage(latest.clone());
+            app.manage(tx.clone());
+            if web_enabled {
+                let bind = std::env::var("NETWORK_WATCH_WEB_BIND")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or_else(|| "0.0.0.0:17321".parse().expect("default bind addr"));
+                web_server::start_web_server(latest, tx, machine_id, bind);
+            }
+
             sampler::start_sampler(app.app_handle().clone());
             #[cfg(target_os = "windows")]
             overlay::start_windows_topmost_guard(app.app_handle().clone());

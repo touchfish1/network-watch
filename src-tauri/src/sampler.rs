@@ -21,12 +21,15 @@ use sysinfo::{
     CpuRefreshKind, Disks, MemoryRefreshKind, Networks, Pid, ProcessRefreshKind, ProcessesToUpdate,
     RefreshKind, System,
 };
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{constants, state};
+use crate::web_server::{LatestSnapshot, SnapshotBroadcaster};
 
 #[cfg(target_os = "windows")]
-use crate::windows_connections::ConnectionsSnapshot;
+type ConnectionsSnapshot = crate::windows_connections::ConnectionsSnapshot;
+#[cfg(not(target_os = "windows"))]
+type ConnectionsSnapshot = ();
 
 /// 进程快照（用于 Top 列表展示）。
 ///
@@ -260,6 +263,17 @@ pub fn start_sampler(app: AppHandle) {
             };
 
             state::record_snapshot(snapshot.timestamp);
+            // 供 Web API 读取
+            if let Some(latest) = app.try_state::<LatestSnapshot>() {
+                // 不阻塞采样线程：尝试写入；失败则忽略
+                if let Ok(mut guard) = latest.0.try_write() {
+                    *guard = Some(snapshot.clone());
+                }
+            }
+            // 供 Web SSE 推送
+            if let Some(tx) = app.try_state::<SnapshotBroadcaster>() {
+                let _ = tx.0.send(snapshot.clone());
+            }
             let _ = app.emit(constants::EVENT_SYSTEM_SNAPSHOT, snapshot);
             thread::sleep(Duration::from_secs(1));
         }
