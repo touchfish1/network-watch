@@ -46,11 +46,11 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ""
+            args: --features agent
           - platform: ubuntu-22.04
-            args: ""
+            args: --features agent
           - platform: macos-latest
-            args: ""
+            args: --features agent
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -101,12 +101,6 @@ jobs:
           releaseDraft: false
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           args: ${{ matrix.args }}
-
-      - name: Build headless agent (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
-        run: |
-          cd src-tauri
-          cargo build --release --no-default-features --features agent --bin network-watch-agent
 
       - name: Upload headless agent to GitHub Release (Linux)
         if: matrix.platform == 'ubuntu-22.04'
