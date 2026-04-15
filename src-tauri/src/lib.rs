@@ -532,6 +532,10 @@ fn run_agent_mode() {
     // Agent 模式默认开启内置 web（便于通过 `IP:端口` 访问监控页）：
     // - NETWORK_WATCH_WEB=0 可关闭
     // - NETWORK_WATCH_WEB_BIND=0.0.0.0:17321 可覆盖绑定地址
+    let mut web_state: Option<(
+        core::web_server::LatestSnapshot,
+        core::web_server::SnapshotBroadcaster,
+    )> = None;
     if env_enabled("NETWORK_WATCH_WEB", true) {
         let (latest, tx) = core::web_server::new_state();
         let machines = core::web_server::new_machine_store();
@@ -539,7 +543,14 @@ fn run_agent_mode() {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or_else(|| "0.0.0.0:17321".parse().expect("default bind addr"));
-        core::web_server::start_web_server(latest, machines, tx, machine_id.clone(), bind);
+        core::web_server::start_web_server(
+            latest.clone(),
+            machines,
+            tx.clone(),
+            machine_id.clone(),
+            bind,
+        );
+        web_state = Some((latest, tx));
     }
 
     let http_client = reqwest::blocking::Client::builder()
@@ -656,6 +667,13 @@ fn run_agent_mode() {
         let Ok(snapshot) = rx.recv() else {
             break;
         };
+        if let Some((latest, tx)) = &web_state {
+            {
+                let mut guard = latest.0.blocking_write();
+                *guard = Some(snapshot.clone());
+            }
+            let _ = tx.0.send(snapshot.clone());
+        }
         let body = serde_json::json!({
             "machine_id": &machine_id,
             "host_name": &host_name,
