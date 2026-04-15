@@ -115,6 +115,16 @@ export type WebMonitorHint = {
   note: string | null;
 };
 
+/** 悬窗通过 `get_online_machines` 拉取到的在线主机快照。 */
+export type OnlineMachine = {
+  machine_id: string;
+  host_name: string | null;
+  host_ips: string[];
+  label: string | null;
+  received_at_ms: number;
+  snapshot: SystemSnapshot;
+};
+
 export type AlertRecord = {
   id: string;
   title: string;

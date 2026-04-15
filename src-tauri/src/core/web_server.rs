@@ -56,6 +56,12 @@ struct SnapshotEnvelope {
 #[serde(rename_all = "snake_case")]
 struct IngestEnvelope {
     machine_id: String,
+    #[serde(default)]
+    host_name: Option<String>,
+    #[serde(default)]
+    host_ips: Option<Vec<String>>,
+    #[serde(default)]
+    label: Option<String>,
     snapshot: serde_json::Value,
 }
 
@@ -211,6 +217,9 @@ async fn ingest_snapshot(
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
                     .unwrap_or_default(),
+                "host_name": payload.host_name,
+                "host_ips": payload.host_ips.unwrap_or_default(),
+                "label": payload.label,
                 "snapshot": payload.snapshot,
             }),
         );
@@ -236,7 +245,7 @@ async fn stream_sse(
     Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)).text("keep-alive"))
 }
 
-fn get_host_ips() -> Vec<String> {
+pub(crate) fn get_host_ips() -> Vec<String> {
     let mut ips = Vec::<String>::new();
     let addrs = match get_if_addrs::get_if_addrs() {
         Ok(v) => v,

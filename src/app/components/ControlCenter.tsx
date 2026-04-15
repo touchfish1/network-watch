@@ -5,8 +5,8 @@ import { isTauri } from "@tauri-apps/api/core";
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
-import { getWebMonitorHint, setClickThroughEnabled } from "../tauri";
-import type { WebMonitorHint } from "../types";
+import { getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
+import type { OnlineMachine, WebMonitorHint } from "../types";
 import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
   defaultCardOrder,
@@ -25,6 +25,7 @@ import { ConnectionsCard } from "./control-center/ConnectionsCard";
 import { NicCard } from "./control-center/NicCard";
 import { ProcessCard } from "./control-center/ProcessCard";
 import { DiskCard } from "./control-center/DiskCard";
+import { OnlineHostsCard } from "./control-center/OnlineHostsCard";
 import { ThemeCard } from "./control-center/ThemeCard";
 import { UpdateCard } from "./control-center/UpdateCard";
 import type { ControlCenterProps } from "./control-center/types";
@@ -160,6 +161,8 @@ export function ControlCenter({
   }, []);
 
   const [tauriWebHint, setTauriWebHint] = useState<WebMonitorHint | null>(null);
+  const [onlineMachines, setOnlineMachines] = useState<OnlineMachine[]>([]);
+  const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!expanded || !isTauri()) {
@@ -183,6 +186,44 @@ export function ControlCenter({
       });
     return () => {
       cancelled = true;
+    };
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded || !isTauri()) {
+      return;
+    }
+
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = () => {
+      void getOnlineMachines()
+        .then((machines) => {
+          if (cancelled) {
+            return;
+          }
+          setOnlineMachines(machines);
+          setSelectedMachineId((current) => {
+            if (current && machines.some((item) => item.machine_id === current)) {
+              return current;
+            }
+            return machines[0]?.machine_id ?? null;
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setOnlineMachines([]);
+          }
+        });
+    };
+
+    poll();
+    timer = window.setInterval(poll, 2000);
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearInterval(timer);
+      }
     };
   }, [expanded]);
 
@@ -222,6 +263,13 @@ export function ControlCenter({
 
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
+    online_hosts: () => (
+      <OnlineHostsCard
+        machines={onlineMachines}
+        selectedMachineId={selectedMachineId}
+        onSelectMachine={setSelectedMachineId}
+      />
+    ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
     history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
     connections: () => <ConnectionsCard connections={snapshot.connections} />,

@@ -2,4 +2,5 @@
 pub mod cli;
 pub mod discovery;
 pub mod hosts_cmd;
+pub mod label_cmd;
 pub mod upgrade;

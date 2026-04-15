@@ -49,4 +49,16 @@ pub enum AgentCommand {
         #[arg(long)]
         env_only: bool,
     },
+    /// 查看/设置本机展示标签（用于 Web/GUI 列表显示）。
+    ///
+    /// - 不带参数：打印当前 label；若未设置则自动生成 `主机名-xxxxx` 并写入配置
+    /// - 带参数：设置为给定 label
+    /// - `--clear`：清除已设置 label
+    Label {
+        /// 设置为指定 label（空则为查看）
+        value: Option<String>,
+        /// 清除已设置 label
+        #[arg(long)]
+        clear: bool,
+    },
 }

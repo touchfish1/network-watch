@@ -22,6 +22,11 @@ use network_watch_lib::agent::cli::{AgentCommand, Cli};
 
 fn main() {
     let cli = Cli::parse();
+    let host_name = hostname::get()
+        .ok()
+        .and_then(|v| v.into_string().ok())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
 
     match cli.command {
         Some(AgentCommand::Check) => {
@@ -48,6 +53,12 @@ fn main() {
         }
         Some(AgentCommand::Guide { env_only }) => {
             network_watch_lib::agent::hosts_cmd::run_guide(env_only);
+        }
+        Some(AgentCommand::Label { value, clear }) => {
+            if let Err(e) = network_watch_lib::agent::label_cmd::run_label(value, clear, &host_name) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
         }
         None => {
             #[cfg(target_os = "linux")]

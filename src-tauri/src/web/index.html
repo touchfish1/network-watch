@@ -82,7 +82,8 @@
         <table>
           <thead>
             <tr>
-              <th>machine_id</th>
+              <th>machine_id / 主机名</th>
+              <th>IP</th>
               <th class="right">CPU</th>
               <th class="right">内存</th>
               <th class="right">网络（↓/↑）</th>
@@ -91,7 +92,7 @@
             </tr>
           </thead>
           <tbody id="cluster_rows">
-            <tr><td colspan="6" class="muted">等待数据…</td></tr>
+            <tr><td colspan="7" class="muted">等待数据…</td></tr>
           </tbody>
         </table>
       </div>
@@ -199,6 +200,16 @@
       if (v && typeof v === "object" && v.snapshot) return v.snapshot;
       return v;
     }
+    function getHostName(v) {
+      if (v && typeof v === "object" && typeof v.host_name === "string" && v.host_name.trim()) return v.host_name;
+      return null;
+    }
+    function getHostIps(v) {
+      if (v && typeof v === "object" && Array.isArray(v.host_ips)) {
+        return v.host_ips.filter((x) => typeof x === "string" && x.trim());
+      }
+      return [];
+    }
     function getReceivedAtMs(v) {
       if (v && typeof v === "object" && typeof v.received_at_ms === "number") return v.received_at_ms;
       return null;
@@ -213,6 +224,13 @@
     function esc(s) {
       return String(s).replace(/[&<>\"]/g, (c) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", "\"":"&quot;" }[c]));
     }
+    let selectedMachineId = null;
+    let selectedMachineSnapshot = null;
+    function applySelectedMachine() {
+      if (selectedMachineSnapshot) {
+        apply(selectedMachineSnapshot);
+      }
+    }
     async function refreshCluster() {
       const meta = document.getElementById("cluster_meta");
       const tbody = document.getElementById("cluster_rows");
@@ -222,13 +240,16 @@
         const entries = Object.entries(data || {});
         meta.textContent = "在线节点 " + entries.length + " · 每 2s 刷新";
         if (!entries.length) {
-          tbody.innerHTML = '<tr><td colspan="6" class="muted">暂无 agent 上报</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="7" class="muted">暂无 agent 上报</td></tr>';
           return;
         }
         const now = Date.now();
         const rows = entries.map(([id, val]) => {
           const receivedAt = getReceivedAtMs(val);
           const snap = getSnapshotFromMachineValue(val) || {};
+          const hostName = getHostName(val) || id;
+          const label = (val && typeof val === "object" && typeof val.label === "string" && val.label.trim()) ? val.label : null;
+          const hostIps = getHostIps(val);
           const cpu = safeNum(snap.cpu_usage);
           const memUsed = safeNum(snap.memory_used);
           const memTotal = safeNum(snap.memory_total);
@@ -238,9 +259,14 @@
           const age = receivedAt ? (now - receivedAt) : null;
           return {
             id,
+            snapshot: snap,
+            hostName,
+            label,
+            hostIps,
             receivedAt: receivedAt || 0,
             html: '<tr>' +
-              '<td><span class="badge mono">' + esc(id) + '</span></td>' +
+              '<td><span class="badge mono">' + esc(id) + '</span><div class="muted" style="margin-top:4px">' + esc(label || hostName) + '</div></td>' +
+              '<td class="mono muted">' + esc(hostIps.join(" / ") || "—") + '</td>' +
               '<td class="right">' + (cpu === null ? "—" : cpu.toFixed(0) + "%") + '</td>' +
               '<td class="right">' + ((memUsed !== null && memTotal) ? (fmtBytes(memUsed) + " / " + fmtBytes(memTotal)) : "—") + '</td>' +
               '<td class="right">' + ((down !== null && up !== null) ? ("↓ " + fmtRate(down) + " / ↑ " + fmtRate(up)) : "—") + '</td>' +
@@ -249,7 +275,32 @@
             '</tr>',
           };
         }).sort((a, b) => b.receivedAt - a.receivedAt);
-        tbody.innerHTML = rows.map(r => r.html).join("");
+        if (!selectedMachineId || !rows.some((r) => r.id === selectedMachineId)) {
+          selectedMachineId = rows[0].id;
+        }
+        const current = rows.find((r) => r.id === selectedMachineId);
+        selectedMachineSnapshot = current ? current.snapshot : null;
+        applySelectedMachine();
+        meta.textContent =
+          "在线节点 " + rows.length +
+          " · 当前 " + esc(current ? (current.label || current.hostName) : selectedMachineId) +
+          " · IP " + esc(current && current.hostIps.length ? current.hostIps.join(" / ") : "—") +
+          " · 每 2s 刷新";
+        tbody.innerHTML = rows.map((r) => {
+          const active = r.id === selectedMachineId;
+          return r.html.replace("<tr>", '<tr data-machine-id="' + esc(r.id) + '"' + (active ? ' style="background: rgba(56,189,248,.14);"' : "") + ">");
+        }).join("");
+        Array.from(tbody.querySelectorAll("tr[data-machine-id]")).forEach((tr) => {
+          tr.addEventListener("click", () => {
+            const id = tr.getAttribute("data-machine-id");
+            const target = rows.find((r) => r.id === id);
+            if (!target) return;
+            selectedMachineId = target.id;
+            selectedMachineSnapshot = target.snapshot;
+            applySelectedMachine();
+            refreshCluster();
+          });
+        });
       } catch (e) {
         meta.textContent = "拉取失败（/api/v1/machines）";
       }

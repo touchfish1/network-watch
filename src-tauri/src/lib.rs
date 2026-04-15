@@ -91,6 +91,18 @@ pub struct WebMonitorHint {
 }
 
 #[cfg(feature = "desktop")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OnlineMachine {
+    pub machine_id: String,
+    pub host_name: Option<String>,
+    pub host_ips: Vec<String>,
+    pub label: Option<String>,
+    pub received_at_ms: u64,
+    pub snapshot: serde_json::Value,
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_web_monitor_hint() -> WebMonitorHint {
     let enabled = env_enabled("NETWORK_WATCH_WEB", true);
@@ -125,6 +137,50 @@ fn get_web_monitor_hint() -> WebMonitorHint {
         primary_url: Some(primary_url),
         note,
     }
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn get_online_machines(
+    machines: tauri::State<'_, core::web_server::MachineSnapshots>,
+) -> Result<Vec<OnlineMachine>, String> {
+    let map = machines.0.read().await;
+    let mut list = Vec::<OnlineMachine>::new();
+
+    for (machine_id, item) in map.iter() {
+        let Some(received_at_ms) = item.get("received_at_ms").and_then(|v| v.as_u64()) else {
+            continue;
+        };
+        let Some(snapshot_value) = item.get("snapshot") else {
+            continue;
+        };
+        list.push(OnlineMachine {
+            machine_id: machine_id.clone(),
+            host_name: item
+                .get("host_name")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string()),
+            host_ips: item
+                .get("host_ips")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|ip| ip.as_str().map(|v| v.to_string()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+            label: item
+                .get("label")
+                .and_then(|v| v.as_str())
+                .map(|v| v.to_string()),
+            received_at_ms,
+            snapshot: snapshot_value.clone(),
+        });
+    }
+
+    list.sort_by(|a, b| b.received_at_ms.cmp(&a.received_at_ms));
+    Ok(list)
 }
 
 pub(crate) fn env_enabled(key: &str, default_value: bool) -> bool {
@@ -283,6 +339,7 @@ pub fn run() {
             open_settings_window,
             close_settings_window,
             get_web_monitor_hint,
+            get_online_machines,
             get_runtime_diagnostics,
             #[cfg(target_os = "windows")]
             set_click_through_enabled
@@ -338,6 +395,13 @@ fn run_agent_mode() {
     // - NETWORK_WATCH_PUSH_TIMEOUT_SECS=3          上报请求超时
     let machine_id = std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "agent-local".to_string());
     let collector_url = std::env::var("NETWORK_WATCH_COLLECTOR").ok();
+    let host_name = hostname::get()
+        .ok()
+        .and_then(|v| v.into_string().ok())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| machine_id.clone());
+    let host_ips = core::web_server::get_host_ips();
+    let label = crate::agent::label_cmd::get_or_create_label(&host_name);
     let timeout_secs = std::env::var("NETWORK_WATCH_PUSH_TIMEOUT_SECS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -475,6 +539,9 @@ fn run_agent_mode() {
         };
         let body = serde_json::json!({
             "machine_id": &machine_id,
+            "host_name": &host_name,
+            "host_ips": &host_ips,
+            "label": &label,
             "snapshot": snapshot,
         });
 

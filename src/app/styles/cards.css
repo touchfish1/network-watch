@@ -284,6 +284,17 @@
   grid-column: span 1;
 }
 
+.online-hosts-card {
+  grid-column: span 1;
+}
+
+.online-host-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
+}
+
 .layout-card {
   grid-column: span 2;
 }

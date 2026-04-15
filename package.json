@@ -1,7 +1,7 @@
 {
     "name":  "network-watch",
     "private":  true,
-    "version":  "0.3.26",
+    "version":  "0.3.27",
     "type":  "module",
     "scripts":  {
                     "dev":  "vite",
@@ -36,5 +36,7 @@
                             "vite":  "^8.0.4"
                         }
 }
+
+
 
 

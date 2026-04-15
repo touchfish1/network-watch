@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { RuntimeDiagnostics, WebMonitorHint } from "./types";
+import type { OnlineMachine, RuntimeDiagnostics, WebMonitorHint } from "./types";
 
 /**
  * 统一封装 Tauri `invoke` 调用。
@@ -22,6 +22,11 @@ export async function getRuntimeDiagnostics() {
 /** 与后端 Web 监控绑定一致的本机访问地址（用于控制中心展示）。 */
 export async function getWebMonitorHint() {
   return await invoke<WebMonitorHint>("get_web_monitor_hint");
+}
+
+/** 获取 agent 上报到 GUI 的在线主机列表（按最近上报时间倒序）。 */
+export async function getOnlineMachines() {
+  return await invoke<OnlineMachine[]>("get_online_machines");
 }
 
 /**
