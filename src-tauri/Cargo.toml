@@ -1,6 +1,6 @@
 [package]
 name = "src-tauri"
-version = "0.3.19"
+version = "0.3.20"
 edition = "2024"
 
 [features]
@@ -19,7 +19,7 @@ desktop = [
 agent = []
 
 [[bin]]
-name = "network-watch"
+name = "src-tauri"
 path = "src/main.rs"
 required-features = ["desktop"]
 
