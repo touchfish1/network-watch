@@ -1,7 +1,8 @@
 [package]
 name = "src-tauri"
-version = "0.3.20"
+version = "0.3.21"
 edition = "2024"
+default-run = "src-tauri"
 
 [features]
 # 桌面 GUI（默认）：包含 Tauri 及其插件/构建脚本。
@@ -17,11 +18,6 @@ desktop = [
 ]
 # Headless agent：仅保留采样/发现/上报，不引入 GUI 依赖。
 agent = []
-
-[[bin]]
-name = "src-tauri"
-path = "src/main.rs"
-required-features = ["desktop"]
 
 [[bin]]
 name = "network-watch-agent"

@@ -156,6 +156,13 @@ export function ControlCenter({
     saveCardVisibility(defaultCardVisibility);
   }, []);
 
+  const webUrl = "http://localhost:17321/";
+  const copyWebUrl = useCallback(() => {
+    void navigator.clipboard?.writeText(webUrl).catch(() => {
+      // ignore
+    });
+  }, []);
+
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
@@ -233,6 +240,14 @@ export function ControlCenter({
 
       <section className="settings-panel">
         {cardOrder.map((id) => (cardVisibility[id] ? <div key={`card-${id}`}>{renderers[id]()}</div> : null))}
+      </section>
+
+      <section className="web-hint">
+        <span className="web-hint-label">Web</span>
+        <span className="web-hint-url">{webUrl}</span>
+        <button type="button" className="link-button" onClick={copyWebUrl}>
+          复制
+        </button>
       </section>
 
       <div className={`details ${expanded ? "details-visible" : ""}`}>

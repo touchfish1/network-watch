@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Network Watch</title>
+    <meta
+      name="description"
+      content="Network Watch：基于 Tauri v2 + React + Rust(sysinfo) 的桌面悬浮系统监控与局域网多机器采集工具。"
+    />
+    <style>
+      :root {
+        --bg0: #070a12;
+        --bg1: #0b1220;
+        --panel: rgba(255, 255, 255, 0.06);
+        --border: rgba(255, 255, 255, 0.12);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.66);
+        --accent: #6ea8ff;
+        --accent2: #47e5bc;
+        --shadow: rgba(0, 0, 0, 0.35);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+        --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+          "Apple Color Emoji", "Segoe UI Emoji";
+      }
+
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg0: #f6f8ff;
+          --bg1: #eef3ff;
+          --panel: rgba(0, 0, 0, 0.04);
+          --border: rgba(0, 0, 0, 0.08);
+          --text: rgba(18, 24, 38, 0.92);
+          --muted: rgba(18, 24, 38, 0.66);
+          --shadow: rgba(15, 23, 42, 0.12);
+        }
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        font-family: var(--sans);
+        color: var(--text);
+        background: radial-gradient(1200px 600px at 20% 0%, rgba(110, 168, 255, 0.16), transparent 60%),
+          radial-gradient(900px 540px at 90% 10%, rgba(71, 229, 188, 0.12), transparent 55%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .container {
+        width: min(1100px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+      header {
+        padding: 26px 0 18px;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .brand {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      .brand strong {
+        font-size: 16px;
+        letter-spacing: 0.02em;
+      }
+      .brand span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .nav {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .hero {
+        padding: 28px 0 18px;
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 18px;
+        align-items: start;
+      }
+      @media (max-width: 920px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 16px 36px var(--shadow);
+      }
+      .hero-main {
+        padding: 18px 18px 16px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 34px;
+        line-height: 1.12;
+        letter-spacing: -0.02em;
+      }
+      .subtitle {
+        margin-top: 10px;
+        color: var(--muted);
+        line-height: 1.55;
+        font-size: 14px;
+      }
+      .cta {
+        margin-top: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.14);
+        font-size: 13px;
+      }
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(110, 168, 255, 0.35), rgba(71, 229, 188, 0.22));
+        border-color: color-mix(in srgb, var(--border) 60%, transparent);
+      }
+      .btn code {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      .hero-side {
+        padding: 14px 14px 12px;
+      }
+      .meta-grid {
+        display: grid;
+        gap: 10px;
+      }
+      .kv {
+        padding: 10px 10px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: rgba(0, 0, 0, 0.08);
+      }
+      .k {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .v {
+        margin-top: 6px;
+        font-weight: 800;
+        font-size: 13px;
+      }
+      main {
+        padding: 10px 0 42px;
+      }
+      section {
+        margin-top: 16px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+      @media (max-width: 640px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+      .feature {
+        padding: 12px 12px;
+      }
+      .feature strong {
+        display: block;
+        margin-top: 2px;
+        font-size: 14px;
+      }
+      .feature p {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 920px) {
+        .split {
+          grid-template-columns: 1fr;
+        }
+      }
+      .block {
+        padding: 14px 14px;
+      }
+      .block h2 {
+        margin: 0;
+        font-size: 16px;
+      }
+      .block .desc {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.6;
+      }
+      pre {
+        margin: 10px 0 0;
+        padding: 12px 12px;
+        border-radius: 14px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.16);
+        overflow: auto;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 12px;
+      }
+      footer {
+        padding: 18px 0 26px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(0, 0, 0, 0.12);
+        color: var(--muted);
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="container">
+      <div class="topbar">
+        <div class="brand">
+          <strong>Network Watch</strong>
+          <span>桌面悬浮监控 + 局域网采集 Agent</span>
+        </div>
+        <nav class="nav">
+          <a href="#features">功能</a>
+          <a href="#web">Web</a>
+          <a href="#agent">Agent</a>
+          <a href="#download">下载</a>
+          <a href="#contribute">贡献</a>
+        </nav>
+      </div>
+
+      <div class="hero">
+        <div class="hero-main card">
+          <h1>轻量、常驻、可扩展的系统监控。</h1>
+          <div class="subtitle">
+            基于 <span class="badge">Tauri v2</span> + <span class="badge">React</span> + <span class="badge">Rust(sysinfo)</span>。
+            <br />
+            桌面端悬浮窗用于实时展示 CPU / 内存 / 网络速率；无 GUI 的 Linux 可作为 Agent 采集并上报到局域网主节点。
+          </div>
+          <div class="cta" id="download">
+            <a class="btn primary" href="https://github.com/touchfish1/network-watch/releases" target="_blank" rel="noreferrer">
+              下载最新版（Releases）
+            </a>
+            <a class="btn" href="https://github.com/touchfish1/network-watch" target="_blank" rel="noreferrer">GitHub</a>
+            <a class="btn" href="./project-log.html">项目日志</a>
+          </div>
+        </div>
+
+        <aside class="hero-side card">
+          <div class="meta-grid">
+            <div class="kv">
+              <div class="k">适用场景</div>
+              <div class="v">桌面常驻监控 / 局域网多机器采集</div>
+            </div>
+            <div class="kv">
+              <div class="k">平台</div>
+              <div class="v">Windows / macOS / Linux</div>
+            </div>
+            <div class="kv">
+              <div class="k">开源协议</div>
+              <div class="v">MIT（如需可在仓库补齐 License）</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </header>
+
+    <main class="container">
+      <section id="features" class="grid">
+        <div class="card feature">
+          <div class="k">悬浮窗</div>
+          <strong>收起态状态条 + 展开态控制中心</strong>
+          <p>透明置顶、吸边停靠、两列信息卡片与趋势图，适合常驻展示关键指标。</p>
+        </div>
+        <div class="card feature">
+          <div class="k">告警/配额/历史</div>
+          <strong>更像“产品”的监控体验</strong>
+          <p>阈值告警、月度配额、分钟桶历史汇总与趋势，设置弹窗分组导航。</p>
+        </div>
+        <div class="card feature">
+          <div class="k">Web 监控</div>
+          <strong>浏览器随时查看</strong>
+          <p>内置 Web 页面 + SSE 实时刷新；支持显示主机名/IP、集群视图等。</p>
+        </div>
+        <div class="card feature">
+          <div class="k">Agent 模式</div>
+          <strong>无 GUI Linux 也能采集</strong>
+          <p>纯 Rust 可执行文件，不依赖 GTK/WebKit；自动发现局域网 GUI 主节点并上报。</p>
+        </div>
+        <div class="card feature">
+          <div class="k">多主节点</div>
+          <strong>同时上报到多个 GUI 节点</strong>
+          <p>UDP 广播发现 + capabilities 校验，维护 TTL 节点集合，单点失败不影响其他节点。</p>
+        </div>
+        <div class="card feature">
+          <div class="k">自动发布</div>
+          <strong>GitHub Actions 多平台构建</strong>
+          <p>Tag 触发 Windows/macOS/Linux 构建并上传 Release；Linux 额外上传 agent 二进制。</p>
+        </div>
+      </section>
+
+      <section id="web" class="card block">
+        <h2>Web 端</h2>
+        <div class="desc">
+          桌面主节点默认启动 Web 服务（可通过环境变量控制）。你可以用浏览器访问，或在局域网中用手机/平板查看。
+        </div>
+        <pre><code>默认地址：http://&lt;主机IP&gt;:17321/
+健康检查：GET /api/v1/health
+快照：GET /api/v1/snapshot
+集群：GET /api/v1/machines</code></pre>
+      </section>
+
+      <section id="agent" class="card block">
+        <h2>Agent（无 GUI Linux）</h2>
+        <div class="desc">
+          适用于服务器、软路由、树莓派等无图形环境。Agent 会采集系统指标，并自动发现局域网的 GUI 主节点上报。
+        </div>
+        <pre><code># 运行时环境变量（示例）
+NETWORK_WATCH_MACHINE_ID=linux-node-01
+NETWORK_WATCH_DISCOVERY_PORT=17322
+NETWORK_WATCH_DISCOVERY_INTERVAL_SECS=10
+NETWORK_WATCH_NODE_TTL_SECS=30
+NETWORK_WATCH_CAPABILITY_PATH=/api/v1/capabilities
+# 兜底：发现为空时上报到固定主节点
+NETWORK_WATCH_COLLECTOR=http://192.168.1.100:17321/api/v1/ingest</code></pre>
+      </section>
+
+      <section id="contribute" class="split">
+        <div class="card block">
+          <h2>贡献</h2>
+          <div class="desc">
+            欢迎 PR：修复跨平台问题、改进 UI/UX、补充文档、增强 Web/Agent 能力。建议先从 issues/roadmap 里挑任务。
+          </div>
+          <pre><code>npm install
+npm run tauri dev</code></pre>
+        </div>
+        <div class="card block">
+          <h2>隐私与安全</h2>
+          <div class="desc">
+            Network Watch 默认只在本机/局域网工作。若你在不可信网络使用，请将 Web 绑定到 127.0.0.1，
+            或在反向代理层加鉴权（后续也可在程序内置 token）。
+          </div>
+          <pre><code>NETWORK_WATCH_WEB_BIND=127.0.0.1:17321</code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer class="container">
+      <div>© Network Watch · Hosted on GitHub Pages</div>
+    </footer>
+  </body>
+</html>
+
