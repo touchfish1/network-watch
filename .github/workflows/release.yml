@@ -60,7 +60,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install Rust stable
@@ -102,8 +102,32 @@ jobs:
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           args: ${{ matrix.args }}
 
-      - name: Upload headless agent to GitHub Release (Linux)
-        if: matrix.platform == 'ubuntu-22.04'
+  # 独立 job：仅构建 Linux headless agent 并上传 Release，不使用 Node / 不与桌面矩阵共用 runner。
+  publish-agent:
+    name: Linux agent (standalone)
+    needs: prepare-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+          key: agent
+
+      - name: Build network-watch-agent
+        run: |
+          cd src-tauri
+          cargo build --release --no-default-features --features agent --bin network-watch-agent
+
+      - name: Upload agent binary to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
