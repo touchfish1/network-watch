@@ -32,6 +32,7 @@ import { UpdateModal } from "./control-center/UpdateModal";
 import type { ControlCenterProps } from "./control-center/types";
 import { ControlCenterSettingsModal } from "./control-center/ControlCenterSettingsModal";
 import { emitAppEvent } from "../stateBus";
+import { DEFAULT_HOST_STALE_THRESHOLD_MS, loadHostStaleThresholdMs, saveHostStaleThresholdMs } from "../config/hostStatus";
 
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 
@@ -167,6 +168,14 @@ export function ControlCenter({
   const [tauriWebHint, setTauriWebHint] = useState<WebMonitorHint | null>(null);
   const [onlineMachines, setOnlineMachines] = useState<OnlineMachine[]>([]);
   const [selectedMachineId, setSelectedMachineId] = useState<string | null>(null);
+  const [hostStaleThresholdMs, setHostStaleThresholdMs] = useState(() =>
+    typeof window !== "undefined" ? loadHostStaleThresholdMs() : DEFAULT_HOST_STALE_THRESHOLD_MS,
+  );
+
+  const updateHostStaleThresholdMs = useCallback((ms: number) => {
+    setHostStaleThresholdMs(ms);
+    saveHostStaleThresholdMs(ms);
+  }, []);
 
   useEffect(() => {
     if (!expanded || !isTauri()) {
@@ -288,6 +297,7 @@ export function ControlCenter({
         machines={onlineMachines}
         selectedMachineId={selectedMachineId}
         onSelectMachine={setSelectedMachineId}
+        staleThresholdMs={hostStaleThresholdMs}
       />
     ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
@@ -409,6 +419,8 @@ export function ControlCenter({
         onResetCards={resetCards}
         onToggleCard={toggleCard}
         onMoveCard={moveCard}
+        hostStaleThresholdMs={hostStaleThresholdMs}
+        setHostStaleThresholdMs={updateHostStaleThresholdMs}
       />
       <UpdateModal
         open={showUpdateModal}

@@ -262,6 +262,50 @@
   color: var(--text-primary);
 }
 
+.settings-text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--button-border);
+  border-radius: 999px;
+  background: var(--panel-soft);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.settings-text-input::placeholder {
+  color: var(--text-muted);
+}
+
+.online-host-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.host-status-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}
+
+.host-status-ok {
+  color: color-mix(in srgb, var(--accent) 92%, white);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+.host-status-stale {
+  color: rgba(255, 190, 92, 0.95);
+  border-color: rgba(255, 190, 92, 0.38);
+}
+
 .settings-popover-options {
   display: flex;
   flex-wrap: wrap;

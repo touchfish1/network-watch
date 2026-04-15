@@ -39,6 +39,13 @@
     .right { text-align: right; }
     .muted { color: var(--muted); }
     .badge { display:inline-block; padding:2px 6px; border:1px solid var(--border); border-radius: 999px; background: rgba(0,0,0,0.22); }
+    .filter-row { display:flex; gap:10px; align-items:center; margin-top:10px; }
+    .filter-input { flex:1 1 auto; min-width:0; padding:8px 10px; border:1px solid var(--border); border-radius:999px; background: rgba(0,0,0,0.18); color: rgba(255,255,255,0.92); }
+    .filter-input::placeholder { color: var(--muted); }
+    .pill-ok { color: rgba(56,189,248,0.95); }
+    .pill-stale { color: rgba(255,190,92,0.95); }
+    tr.row-stale td { background: rgba(255,190,92,0.06); }
+    .mini-number { width: 96px; text-align: right; }
     .chart-grid { display:grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap:12px; }
     .chart-card { background: rgba(0,0,0,0.18); border: 1px solid var(--border); border-radius: 12px; padding: 10px; }
     .chart-head { display:flex; justify-content:space-between; gap:10px; align-items:baseline; margin-bottom: 8px; }
@@ -112,6 +119,11 @@
     <section class="card">
       <div class="k" style="margin-bottom:8px">集群视图（/api/v1/machines）</div>
       <div class="s muted" id="cluster_meta">等待数据…</div>
+      <div class="filter-row">
+        <input id="cluster_filter" class="filter-input" placeholder="搜索：label / 主机名 / IP / machine_id" />
+        <input id="cluster_stale_secs" class="filter-input mini-number" type="number" min="2" max="600" step="1" placeholder="离线(s)" />
+        <span class="badge" id="cluster_filter_count">—</span>
+      </div>
       <div style="margin-top:10px; overflow:auto">
         <table>
           <thead>
@@ -350,9 +362,43 @@
         apply(selectedMachineSnapshot);
       }
     }
+    const HOST_STALE_THRESHOLD_STORAGE_KEY = "network-watch-host-stale-threshold-ms-v1";
+    const DEFAULT_HOST_STALE_THRESHOLD_MS = 12000;
+    function loadStaleThresholdMs() {
+      try {
+        const raw = localStorage.getItem(HOST_STALE_THRESHOLD_STORAGE_KEY);
+        const n = raw ? Number(raw) : NaN;
+        if (!Number.isFinite(n)) return DEFAULT_HOST_STALE_THRESHOLD_MS;
+        return Math.min(10 * 60 * 1000, Math.max(2000, Math.round(n)));
+      } catch {
+        return DEFAULT_HOST_STALE_THRESHOLD_MS;
+      }
+    }
+    function saveStaleThresholdMs(ms) {
+      try {
+        const safe = Math.min(10 * 60 * 1000, Math.max(2000, Math.round(ms)));
+        localStorage.setItem(HOST_STALE_THRESHOLD_STORAGE_KEY, String(safe));
+      } catch {}
+    }
+
+    let clusterFilterQuery = "";
+    let staleThresholdMs = loadStaleThresholdMs();
+    function norm(s) { return String(s || "").toLowerCase(); }
+    function matchesQuery(row, q) {
+      if (!q) return true;
+      const text = [
+        row.id,
+        row.label || "",
+        row.hostName || "",
+        Array.isArray(row.hostIps) ? row.hostIps.join(" ") : "",
+      ].join(" ");
+      return norm(text).includes(q);
+    }
     async function refreshCluster() {
       const meta = document.getElementById("cluster_meta");
       const tbody = document.getElementById("cluster_rows");
+      const filterEl = document.getElementById("cluster_filter");
+      const filterCountEl = document.getElementById("cluster_filter_count");
       const guiMachineId = "__MACHINE_ID__";
       const guiName = "__HOST_NAME__";
       const guiIps = "__HOST_IPS__";
@@ -374,7 +420,7 @@
           return;
         }
         const now = Date.now();
-        const rows = entries.map(([id, val]) => {
+        const rowsAll = entries.map(([id, val]) => {
           const receivedAt = getReceivedAtMs(val);
           const snap = getSnapshotFromMachineValue(val) || {};
           const hostName = getHostName(val) || id;
@@ -387,6 +433,7 @@
           const up = safeNum(snap.network_upload);
           const uptime = safeNum(snap.uptime_seconds);
           const age = receivedAt ? (now - receivedAt) : null;
+          const stale = age !== null ? age > staleThresholdMs : false;
           return {
             id,
             snapshot: snap,
@@ -394,6 +441,7 @@
             label,
             hostIps,
             receivedAt: receivedAt || 0,
+            stale,
             html: '<tr>' +
               '<td><span class="badge mono">' + esc(id) + '</span><div class="muted" style="margin-top:4px">' + esc(label || hostName) + '</div></td>' +
               '<td class="mono muted">' + esc(hostIps.join(" / ") || "—") + '</td>' +
@@ -405,6 +453,14 @@
             '</tr>',
           };
         }).sort((a, b) => b.receivedAt - a.receivedAt);
+
+        if (filterEl && typeof filterEl.value === "string") {
+          clusterFilterQuery = filterEl.value.trim().toLowerCase();
+        }
+        const rows = rowsAll.filter((r) => matchesQuery(r, clusterFilterQuery));
+        if (filterCountEl) {
+          filterCountEl.textContent = (clusterFilterQuery ? (rows.length + " / " + rowsAll.length) : String(rowsAll.length));
+        }
         if (selectedMachineId && !rows.some((r) => r.id === selectedMachineId)) {
           selectedMachineId = null;
         }
@@ -420,7 +476,13 @@
           " · 每 2s 刷新";
         tbody.innerHTML = rows.map((r) => {
           const active = r.id === selectedMachineId;
-          return r.html.replace("<tr>", '<tr data-machine-id="' + esc(r.id) + '"' + (active ? ' style="background: rgba(56,189,248,.14);"' : "") + ">");
+          const staleCls = r.stale ? " row-stale" : "";
+          return r.html.replace(
+            "<tr>",
+            '<tr class="' + staleCls.trim() + '" data-machine-id="' + esc(r.id) + '"' +
+              (active ? ' style="background: rgba(56,189,248,.14);"' : "") +
+              ">"
+          );
         }).join("");
         Array.from(tbody.querySelectorAll("tr[data-machine-id]")).forEach((tr) => {
           tr.addEventListener("click", () => {
@@ -673,6 +735,22 @@
         } catch {}
       };
       refreshCluster();
+      const filterEl = document.getElementById("cluster_filter");
+      if (filterEl) {
+        filterEl.addEventListener("input", () => refreshCluster());
+      }
+      const staleEl = document.getElementById("cluster_stale_secs");
+      if (staleEl) {
+        const init = Math.round(staleThresholdMs / 1000);
+        staleEl.value = String(init);
+        staleEl.addEventListener("input", () => {
+          const sec = Number(staleEl.value || init);
+          const next = Math.min(600, Math.max(2, Math.round(sec))) * 1000;
+          staleThresholdMs = next;
+          saveStaleThresholdMs(next);
+          refreshCluster();
+        });
+      }
       // 关系图与集群共享同一份数据源：/api/v1/machines
       try {
         const res = await fetch("/api/v1/machines");

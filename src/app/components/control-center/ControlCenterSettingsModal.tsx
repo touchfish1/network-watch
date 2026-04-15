@@ -40,6 +40,9 @@ type ControlCenterSettingsModalProps = {
   onResetCards: () => void;
   onToggleCard: (id: CardId) => void;
   onMoveCard: (id: CardId, direction: -1 | 1) => void;
+
+  hostStaleThresholdMs: number;
+  setHostStaleThresholdMs: (ms: number) => void;
 };
 
 type SettingsTab = "overview" | "alerts" | "quota" | "history";
@@ -65,6 +68,8 @@ export function ControlCenterSettingsModal({
   onResetCards,
   onToggleCard,
   onMoveCard,
+  hostStaleThresholdMs,
+  setHostStaleThresholdMs,
 }: ControlCenterSettingsModalProps) {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("overview");
 
@@ -193,6 +198,44 @@ export function ControlCenterSettingsModal({
                         {formatIntervalLabel(minutes)}
                       </button>
                     ))}
+                  </div>
+                </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
+                      <span className="settings-label">主机状态</span>
+                      <strong>离线判定阈值</strong>
+                    </div>
+                    <span className="theme-current">{Math.round(hostStaleThresholdMs / 1000)}s</span>
+                  </div>
+                  <div className="kv-table">
+                    <div className="kv-row">
+                      <span className="kv-key">超过该时长未上报 → 可能离线</span>
+                      <span className="kv-value">
+                        <input
+                          className="settings-number-input"
+                          type="number"
+                          min={2}
+                          max={600}
+                          value={Math.round(hostStaleThresholdMs / 1000)}
+                          onChange={(event) => setHostStaleThresholdMs(Number(event.target.value || 12) * 1000)}
+                        />
+                        秒
+                      </span>
+                    </div>
+                    <div className="settings-popover-options">
+                      {[6, 12, 20, 30, 60].map((sec) => (
+                        <button
+                          key={`stale-${sec}`}
+                          type="button"
+                          className={`settings-option ${Math.round(hostStaleThresholdMs / 1000) === sec ? "settings-option-active" : ""}`}
+                          onClick={() => setHostStaleThresholdMs(sec * 1000)}
+                        >
+                          {sec}s
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </article>
               </>
