@@ -232,6 +232,8 @@ pub fn query_events(
     machine_id: Option<&str>,
     since_ms: Option<u64>,
     until_ms: Option<u64>,
+    event_type: Option<&str>,
+    query: Option<&str>,
     offset: usize,
     limit: usize,
 ) -> Result<Vec<EventRow>, String> {
@@ -241,50 +243,36 @@ pub fn query_events(
     let offset = offset as i64;
     let since = since_ms.unwrap_or(0) as i64;
     let until = until_ms.unwrap_or(u64::MAX) as i64;
-    let mut out = Vec::<EventRow>::new();
-
-    if let Some(mid) = machine_id {
-        let mut stmt = conn
-            .prepare(
-                r#"
-SELECT ts_ms, machine_id, label, type
-FROM events
-WHERE machine_id = ?1
-  AND ts_ms >= ?2
-  AND ts_ms <= ?3
-ORDER BY ts_ms DESC
-LIMIT ?4 OFFSET ?5
-"#,
-            )
-            .map_err(|e| e.to_string())?;
-        let mut rows = stmt
-            .query(params![mid, since, until, limit, offset])
-            .map_err(|e| e.to_string())?;
-        while let Some(row) = rows.next().map_err(|e| e.to_string())? {
-            out.push(EventRow {
-                ts_ms: row.get::<_, i64>(0).map_err(|e| e.to_string())? as u64,
-                machine_id: row.get::<_, String>(1).map_err(|e| e.to_string())?,
-                label: row.get::<_, String>(2).map_err(|e| e.to_string())?,
-                r#type: row.get::<_, String>(3).map_err(|e| e.to_string())?,
-            });
+    let event_type = event_type.and_then(|v| {
+        let t = v.trim();
+        if t.is_empty() { None } else { Some(t) }
+    });
+    let query_like = query.and_then(|v| {
+        let t = v.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(format!("%{}%", t.replace('%', "\\%").replace('_', "\\_")))
         }
-        return Ok(out);
-    }
-
+    });
+    let mut out = Vec::<EventRow>::new();
     let mut stmt = conn
         .prepare(
             r#"
 SELECT ts_ms, machine_id, label, type
 FROM events
-WHERE ts_ms >= ?1
-  AND ts_ms <= ?2
+WHERE (?1 IS NULL OR machine_id = ?1)
+  AND ts_ms >= ?2
+  AND ts_ms <= ?3
+  AND (?4 IS NULL OR type = ?4)
+  AND (?5 IS NULL OR label LIKE ?5 ESCAPE '\' OR machine_id LIKE ?5 ESCAPE '\')
 ORDER BY ts_ms DESC
-LIMIT ?3 OFFSET ?4
+LIMIT ?6 OFFSET ?7
 "#,
         )
         .map_err(|e| e.to_string())?;
     let mut rows = stmt
-        .query(params![since, until, limit, offset])
+        .query(params![machine_id, since, until, event_type, query_like, limit, offset])
         .map_err(|e| e.to_string())?;
     while let Some(row) = rows.next().map_err(|e| e.to_string())? {
         out.push(EventRow {

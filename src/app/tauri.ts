@@ -37,6 +37,8 @@ export async function getHostEvents(params?: {
   machineId?: string;
   sinceMs?: number;
   untilMs?: number;
+  eventType?: "online" | "offline" | "all";
+  query?: string;
   offset?: number;
   limit?: number;
 }) {
@@ -44,6 +46,8 @@ export async function getHostEvents(params?: {
     machineId: params?.machineId,
     sinceMs: params?.sinceMs,
     untilMs: params?.untilMs,
+    eventType: params?.eventType,
+    query: params?.query,
     offset: params?.offset,
     limit: params?.limit ?? 100,
   });

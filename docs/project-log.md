@@ -393,3 +393,88 @@ Windows 打包产物：
 - 本文件中的“已完成实现”
 - 本文件中的“当前已具备功能清单”
 - 本文件中的“当前验证结果”
+
+## 2026-04-15 执行计划与落地
+
+### 本次目标
+
+- 生成可执行的阶段文档，并按文档立即落地一项优化。
+
+### 新增文档
+
+- 新增执行计划：`docs/execution-plan-2026-04-15.md`
+  - 定义了 Phase 1~3、验收标准、节奏、风险与对策。
+
+### 按计划已执行
+
+- 完成 Phase 1 补强项：Web 事件分页体验优化。
+  - 增加“第 N 页”页码显示。
+  - 增加“最新”按钮，可一键回到偏移 `0`。
+  - 翻到空页时自动回退。
+  - 上一页/下一页/最新按钮状态动态禁用。
+  - 切换事件类型、关键词时自动回到第一页。
+
+涉及文件：
+
+- `src-tauri/src/web/index.html`
+- `docs/execution-plan-2026-04-15.md`
+- `docs/project-log.md`
+
+验证结果：
+
+- `npm run build` 通过。
+- 修改文件无 lints 报错。
+
+### 继续执行（Phase 2 落地）
+
+- 历史趋势区新增状态徽标：`刷新中 / 就绪 / 无数据 / 拉取失败`。
+- 历史趋势元信息在无点位时追加“无数据”提示。
+- 历史曲线新增悬停 tooltip（显示时间与对应指标值）：
+  - CPU 历史曲线：`时间 + CPU%`
+  - 内存历史曲线：`时间 + 内存%`
+
+涉及文件：
+
+- `src-tauri/src/web/index.html`
+- `docs/execution-plan-2026-04-15.md`
+
+### 继续执行（Phase 3 落地）
+
+- 悬窗事件卡接入后端分页查询参数，支持：
+  - 作用域：当前主机 / 全部主机
+  - 时间窗：1h / 24h / 7d
+  - 分页：最新 / 上一页 / 下一页
+- 悬窗事件卡展示分页状态（第 N 页）与刷新状态（刷新中）。
+- 事件空页时自动回退上一页，避免停留空白分页。
+
+涉及文件：
+
+- `src/app/components/ControlCenter.tsx`
+- `src/app/components/control-center/HostEventsCard.tsx`
+- `docs/execution-plan-2026-04-15.md`
+
+### 继续执行（Phase 3 收尾）
+
+- 将悬窗事件类型/关键词过滤下沉到后端查询参数，避免“前端页内过滤”导致分页数量波动。
+- 后端事件查询新增参数：
+  - `event_type`
+  - `query`（匹配 `label` 与 `machine_id`）
+- Web API 与 Tauri 命令保持一致参数结构，悬窗直接复用。
+
+涉及文件：
+
+- `src-tauri/src/core/history_store.rs`
+- `src-tauri/src/core/web_server.rs`
+- `src-tauri/src/lib.rs`
+- `src/app/tauri.ts`
+- `src/app/components/ControlCenter.tsx`
+- `src/app/components/control-center/HostEventsCard.tsx`
+
+### 继续执行（Web/悬窗过滤一致化）
+
+- Web 事件流改为使用后端过滤参数 `event_type/query`，移除前端页内过滤逻辑。
+- Web 与悬窗在事件查询行为上统一为“服务端过滤后分页”。
+
+涉及文件：
+
+- `src-tauri/src/web/index.html`

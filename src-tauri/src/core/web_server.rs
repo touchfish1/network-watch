@@ -314,6 +314,8 @@ struct EventsQuery {
     machine_id: Option<String>,
     since_ms: Option<u64>,
     until_ms: Option<u64>,
+    event_type: Option<String>,
+    query: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
 }
@@ -328,10 +330,21 @@ async fn get_events(
         .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
     let since_ms = q.since_ms;
     let until_ms = q.until_ms;
+    let event_type = q.event_type;
+    let query = q.query;
     let offset = q.offset.unwrap_or(0);
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let result = tokio::task::spawn_blocking(move || {
-        history_store::query_events(&db, mid.as_deref(), since_ms, until_ms, offset, limit)
+        history_store::query_events(
+            &db,
+            mid.as_deref(),
+            since_ms,
+            until_ms,
+            event_type.as_deref(),
+            query.as_deref(),
+            offset,
+            limit,
+        )
     })
     .await
     .ok()

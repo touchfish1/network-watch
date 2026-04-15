@@ -54,6 +54,22 @@
     .chart-title { font-size: 12px; color: var(--muted); }
     .chart-value { font-size: 12px; color: rgba(255,255,255,0.9); }
     .chart-canvas { width: 100%; height: 86px; display: block; }
+    .chart-canvas-wrap { position: relative; }
+    .chart-tooltip {
+      position: absolute;
+      pointer-events: none;
+      transform: translate(-50%, calc(-100% - 8px));
+      padding: 4px 8px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(2, 6, 23, 0.92);
+      color: rgba(255,255,255,0.92);
+      font-size: 11px;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity .12s ease;
+      z-index: 2;
+    }
     .chart-wide { grid-column: 1 / -1; }
     @media (max-width: 980px) { .grid-3 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
     @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } .grid-3 { grid-template-columns: 1fr; } .chart-grid { grid-template-columns: 1fr; } }
@@ -125,16 +141,23 @@
         <button id="hist_scope_all" class="pin" title="全部主机">全部主机</button>
         <button id="hist_24h" class="pin pin-on" title="最近24小时">24h</button>
         <button id="hist_7d" class="pin" title="最近7天">7d</button>
+        <span class="badge" id="hist_loading">就绪</span>
         <span class="badge" id="hist_meta">—</span>
       </div>
       <div class="chart-grid" style="margin-top:10px">
         <div class="chart-card">
           <div class="chart-head"><span class="chart-title">CPU(历史)</span><span class="chart-value" id="hist_cpu_value">—</span></div>
-          <canvas id="hist_cpu" class="chart-canvas" width="420" height="86"></canvas>
+          <div class="chart-canvas-wrap">
+            <canvas id="hist_cpu" class="chart-canvas" width="420" height="86"></canvas>
+            <div id="hist_cpu_tip" class="chart-tooltip"></div>
+          </div>
         </div>
         <div class="chart-card">
           <div class="chart-head"><span class="chart-title">内存%(历史)</span><span class="chart-value" id="hist_mem_value">—</span></div>
-          <canvas id="hist_mem" class="chart-canvas" width="420" height="86"></canvas>
+          <div class="chart-canvas-wrap">
+            <canvas id="hist_mem" class="chart-canvas" width="420" height="86"></canvas>
+            <div id="hist_mem_tip" class="chart-tooltip"></div>
+          </div>
         </div>
       </div>
     </section>
@@ -152,6 +175,8 @@
         <button id="events_time_24h" class="pin" title="最近24小时">24h</button>
         <button id="events_time_7d" class="pin" title="最近7天">7d</button>
         <input id="events_filter_query" class="filter-input" placeholder="筛选主机名 / machine_id / IP" />
+        <span class="badge" id="events_page_label">第 1 页</span>
+        <button id="events_latest" class="pin" title="回到最新">最新</button>
         <button id="events_prev" class="pin" title="上一页">上一页</button>
         <button id="events_next" class="pin" title="下一页">下一页</button>
       </div>
@@ -461,6 +486,7 @@
     let eventsTimeRange = "1h";
     let eventsOffset = 0;
     const EVENTS_PAGE_SIZE = 30;
+    let eventsHasMore = false;
     const HISTORY_ALL_CACHE_TTL_MS = 15000;
     let historyAllCache = {
       range: "",
@@ -468,6 +494,7 @@
       data: [],
     };
     let historyAllInflight = null;
+    let histLastPoints = [];
 
     async function fetchAggregatedHistoryAll(range) {
       const now = Date.now();
@@ -641,9 +668,15 @@
       const guiMachineId = "__MACHINE_ID__";
       const mid = selectedMachineId || guiMachineId;
       const histMeta = document.getElementById("hist_meta");
+      const histLoading = document.getElementById("hist_loading");
       const eventsMeta = document.getElementById("events_meta");
       const eventsRows = document.getElementById("events_rows");
+      const eventsPrevBtn = document.getElementById("events_prev");
+      const eventsNextBtn = document.getElementById("events_next");
+      const eventsPageLabel = document.getElementById("events_page_label");
+      const eventsLatestBtn = document.getElementById("events_latest");
       try {
+        if (histLoading) histLoading.textContent = "刷新中…";
         const eventsMachineId = eventsScope === "all" ? "" : mid;
         const nowMs = Date.now();
         const eventsSinceMs =
@@ -657,6 +690,8 @@
             "machine_id=" + encodeURIComponent(eventsMachineId) +
             "&since_ms=" + encodeURIComponent(eventsSinceMs) +
             "&until_ms=" + encodeURIComponent(nowMs) +
+            "&event_type=" + encodeURIComponent(eventsTypeFilter) +
+            "&query=" + encodeURIComponent(eventsQuery) +
             "&offset=" + encodeURIComponent(eventsOffset) +
             "&limit=" + encodeURIComponent(EVENTS_PAGE_SIZE)
         );
@@ -672,6 +707,7 @@
         const evRes = await evPromise;
         const events = await evRes.json();
         const list = Array.isArray(hist) ? hist : [];
+        histLastPoints = list;
         const cpu = list.map((x) => typeof x.cpu === "number" ? x.cpu : 0);
         const mem = list.map((x) => typeof x.mem_pct === "number" ? x.mem_pct : 0);
         drawLineChart("hist_cpu", [cpu], ["#38bdf8"], 100);
@@ -682,24 +718,25 @@
         if (histMemValue) histMemValue.textContent = mem.length ? mem[mem.length - 1].toFixed(0) + "%" : "—";
         if (histMeta) {
           const scopeLabel = historyScope === "all" ? "全部主机聚合" : ("主机 " + mid);
-          histMeta.textContent = scopeLabel + " · " + historyRange + " · 点数 " + list.length;
+          histMeta.textContent = scopeLabel + " · " + historyRange + " · 点数 " + list.length + (list.length ? "" : "（无数据）");
         }
+        if (histLoading) histLoading.textContent = list.length ? "就绪" : "无数据";
 
         const evs = Array.isArray(events) ? events : [];
-        const evFiltered = evs.filter((e) => {
-          if (eventsTypeFilter !== "all" && e.type !== eventsTypeFilter) return false;
-          if (!eventsQuery) return true;
-          const text = [e.label || "", e.machine_id || "", mid].join(" ").toLowerCase();
-          return text.includes(eventsQuery);
-        });
-        if (!evFiltered.length) {
+        eventsHasMore = evs.length >= EVENTS_PAGE_SIZE;
+        if (!evs.length && eventsOffset > 0) {
+          eventsOffset = Math.max(0, eventsOffset - EVENTS_PAGE_SIZE);
+          refreshHistoryAndEvents();
+          return;
+        }
+        if (!evs.length) {
           if (eventsRows) eventsRows.innerHTML = '<tr><td colspan="3" class="muted">暂无事件</td></tr>';
           if (eventsMeta) {
             eventsMeta.textContent = eventsScope === "all" ? "暂无事件（全部主机）" : "暂无事件（当前主机）";
           }
         } else {
           if (eventsRows) {
-            eventsRows.innerHTML = evFiltered.map((e) => {
+            eventsRows.innerHTML = evs.map((e) => {
               const ts = typeof e.ts_ms === "number" ? new Date(e.ts_ms).toLocaleString() : "—";
               const label = e.label || e.machine_id || "—";
               const type = e.type === "online" ? "上线" : (e.type === "offline" ? "离线" : String(e.type || "—"));
@@ -712,13 +749,60 @@
               scopeLabel +
               " · " + eventsTimeRange +
               " · 偏移 " + eventsOffset +
-              " · 当前页 " + evFiltered.length + " 条";
+              " · 当前页 " + evs.length + " 条";
           }
+        }
+        if (eventsPrevBtn) {
+          const canPrev = eventsOffset > 0;
+          eventsPrevBtn.disabled = !canPrev;
+          eventsPrevBtn.style.opacity = canPrev ? "1" : "0.55";
+        }
+        if (eventsNextBtn) {
+          eventsNextBtn.disabled = !eventsHasMore;
+          eventsNextBtn.style.opacity = eventsHasMore ? "1" : "0.55";
+        }
+        if (eventsLatestBtn) {
+          const isLatest = eventsOffset <= 0;
+          eventsLatestBtn.disabled = isLatest;
+          eventsLatestBtn.style.opacity = isLatest ? "0.55" : "1";
+        }
+        if (eventsPageLabel) {
+          const page = Math.floor(eventsOffset / EVENTS_PAGE_SIZE) + 1;
+          eventsPageLabel.textContent = "第 " + page + " 页";
         }
       } catch {
         if (histMeta) histMeta.textContent = "历史数据拉取失败";
+        if (histLoading) histLoading.textContent = "拉取失败";
         if (eventsMeta) eventsMeta.textContent = "事件数据拉取失败";
       }
+    }
+
+    function bindHistoryTooltip(canvasId, tipId, getter) {
+      const canvas = document.getElementById(canvasId);
+      const tip = document.getElementById(tipId);
+      if (!canvas || !tip) return;
+      const hide = () => { tip.style.opacity = "0"; };
+      canvas.addEventListener("mouseleave", hide);
+      canvas.addEventListener("mousemove", (ev) => {
+        if (!Array.isArray(histLastPoints) || histLastPoints.length === 0) {
+          hide();
+          return;
+        }
+        const rect = canvas.getBoundingClientRect();
+        const x = ev.clientX - rect.left;
+        const ratio = Math.min(1, Math.max(0, x / Math.max(1, rect.width)));
+        const idx = Math.min(histLastPoints.length - 1, Math.max(0, Math.round(ratio * (histLastPoints.length - 1))));
+        const p = histLastPoints[idx];
+        if (!p) {
+          hide();
+          return;
+        }
+        const ts = typeof p.ts_ms === "number" ? new Date(p.ts_ms).toLocaleString() : "—";
+        tip.textContent = getter(p, ts);
+        tip.style.left = x + "px";
+        tip.style.top = "6px";
+        tip.style.opacity = "1";
+      });
     }
 
     function renderGraph(entries) {
@@ -1007,6 +1091,8 @@
           refreshHistoryAndEvents();
         });
       }
+      bindHistoryTooltip("hist_cpu", "hist_cpu_tip", (p, ts) => ts + " · CPU " + (typeof p.cpu === "number" ? p.cpu.toFixed(1) + "%" : "—"));
+      bindHistoryTooltip("hist_mem", "hist_mem_tip", (p, ts) => ts + " · 内存 " + (typeof p.mem_pct === "number" ? p.mem_pct.toFixed(1) + "%" : "—"));
       const eventsAllBtn = document.getElementById("events_filter_all");
       const eventsOnBtn = document.getElementById("events_filter_online");
       const eventsOffBtn = document.getElementById("events_filter_offline");
@@ -1016,6 +1102,7 @@
       const eventsQueryInput = document.getElementById("events_filter_query");
       const eventsScopeCurrentBtn = document.getElementById("events_scope_current");
       const eventsScopeAllBtn = document.getElementById("events_scope_all");
+      const eventsLatestBtn = document.getElementById("events_latest");
       const eventsPrevBtn = document.getElementById("events_prev");
       const eventsNextBtn = document.getElementById("events_next");
       const applyEventFilterButtons = () => {
@@ -1043,16 +1130,19 @@
       });
       if (eventsAllBtn) eventsAllBtn.addEventListener("click", () => {
         eventsTypeFilter = "all";
+        eventsOffset = 0;
         applyEventFilterButtons();
         refreshHistoryAndEvents();
       });
       if (eventsOnBtn) eventsOnBtn.addEventListener("click", () => {
         eventsTypeFilter = "online";
+        eventsOffset = 0;
         applyEventFilterButtons();
         refreshHistoryAndEvents();
       });
       if (eventsOffBtn) eventsOffBtn.addEventListener("click", () => {
         eventsTypeFilter = "offline";
+        eventsOffset = 0;
         applyEventFilterButtons();
         refreshHistoryAndEvents();
       });
@@ -1077,6 +1167,7 @@
       if (eventsQueryInput) {
         eventsQueryInput.addEventListener("input", () => {
           eventsQuery = String(eventsQueryInput.value || "").trim().toLowerCase();
+          eventsOffset = 0;
           refreshHistoryAndEvents();
         });
       }
@@ -1086,8 +1177,15 @@
           refreshHistoryAndEvents();
         });
       }
+      if (eventsLatestBtn) {
+        eventsLatestBtn.addEventListener("click", () => {
+          eventsOffset = 0;
+          refreshHistoryAndEvents();
+        });
+      }
       if (eventsNextBtn) {
         eventsNextBtn.addEventListener("click", () => {
+          if (!eventsHasMore) return;
           eventsOffset += EVENTS_PAGE_SIZE;
           refreshHistoryAndEvents();
         });

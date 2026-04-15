@@ -234,6 +234,8 @@ async fn get_host_events(
     machine_id: Option<String>,
     since_ms: Option<u64>,
     until_ms: Option<u64>,
+    event_type: Option<String>,
+    query: Option<String>,
     offset: Option<usize>,
     limit: Option<usize>,
 ) -> Result<Vec<HostEvent>, String> {
@@ -241,8 +243,10 @@ async fn get_host_events(
     let lim = limit.unwrap_or(100).clamp(1, 500);
     let off = offset.unwrap_or(0);
     let mid = machine_id.and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    let et = event_type.and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    let q = query.and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
     let events = tokio::task::spawn_blocking(move || {
-        core::history_store::query_events(&db, mid.as_deref(), since_ms, until_ms, off, lim)
+        core::history_store::query_events(&db, mid.as_deref(), since_ms, until_ms, et.as_deref(), q.as_deref(), off, lim)
     })
     .await
     .map_err(|e| e.to_string())??;

@@ -38,6 +38,7 @@ import { loadPinnedHostIds, savePinnedHostIds } from "../config/pinnedHosts";
 
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 const REMOTE_HISTORY_MAX_POINTS = 60;
+const EVENTS_PAGE_SIZE = 30;
 
 type HostEventType = "online" | "offline";
 type HostEvent = {
@@ -196,6 +197,13 @@ export function ControlCenter({
   );
   const [remoteHistoryByMachineId, setRemoteHistoryByMachineId] = useState<Record<string, MetricHistory>>({});
   const [hostEvents, setHostEvents] = useState<HostEvent[]>([]);
+  const [eventScope, setEventScope] = useState<"current" | "all">("current");
+  const [eventTimeRange, setEventTimeRange] = useState<"1h" | "24h" | "7d">("1h");
+  const [eventTypeFilter, setEventTypeFilter] = useState<"all" | HostEventType>("all");
+  const [eventQuery, setEventQuery] = useState("");
+  const [eventOffset, setEventOffset] = useState(0);
+  const [eventHasMore, setEventHasMore] = useState(false);
+  const [eventLoading, setEventLoading] = useState(false);
   const [hostStaleThresholdMs, setHostStaleThresholdMs] = useState(() =>
     typeof window !== "undefined" ? loadHostStaleThresholdMs() : DEFAULT_HOST_STALE_THRESHOLD_MS,
   );
@@ -324,9 +332,32 @@ export function ControlCenter({
     let cancelled = false;
     let timer: number | undefined;
     const pollEvents = () => {
-      void getHostEvents({ limit: 120 })
+      const now = Date.now();
+      const sinceMs =
+        eventTimeRange === "7d"
+          ? now - 7 * 24 * 60 * 60 * 1000
+          : eventTimeRange === "24h"
+            ? now - 24 * 60 * 60 * 1000
+            : now - 60 * 60 * 1000;
+      const machineId = eventScope === "current" ? (selectedMachineId ?? undefined) : undefined;
+      setEventLoading(true);
+      void getHostEvents({
+        machineId,
+        sinceMs,
+        untilMs: now,
+        eventType: eventTypeFilter,
+        query: eventQuery,
+        offset: eventOffset,
+        limit: EVENTS_PAGE_SIZE,
+      })
         .then((events) => {
           if (cancelled) return;
+          const safe = Array.isArray(events) ? events : [];
+          setEventHasMore(safe.length >= EVENTS_PAGE_SIZE);
+          if (!safe.length && eventOffset > 0) {
+            setEventOffset((cur) => Math.max(0, cur - EVENTS_PAGE_SIZE));
+            return;
+          }
           const mapped: HostEvent[] = (Array.isArray(events) ? events : []).map((e) => ({
             timestamp: e.tsMs,
             type: e.eventType === "online" ? "online" : "offline",
@@ -337,6 +368,9 @@ export function ControlCenter({
         })
         .catch(() => {
           // ignore, keep last events in UI
+        })
+        .finally(() => {
+          if (!cancelled) setEventLoading(false);
         });
     };
     pollEvents();
@@ -345,7 +379,7 @@ export function ControlCenter({
       cancelled = true;
       if (timer) window.clearInterval(timer);
     };
-  }, [expanded]);
+  }, [eventOffset, eventQuery, eventScope, eventTimeRange, eventTypeFilter, expanded, selectedMachineId]);
 
   const selectedRemoteMachine = useMemo(() => {
     if (!selectedMachineId) return null;
@@ -421,7 +455,42 @@ export function ControlCenter({
         events={hostEvents}
       />
     ),
-    events: () => <HostEventsCard events={hostEvents} selectedMachineId={selectedMachineId} />,
+    events: () => (
+      <HostEventsCard
+        events={hostEvents}
+        selectedMachineId={selectedMachineId}
+        scope={eventScope}
+        timeRange={eventTimeRange}
+        offset={eventOffset}
+        pageSize={EVENTS_PAGE_SIZE}
+        hasMore={eventHasMore}
+        loading={eventLoading}
+        eventTypeFilter={eventTypeFilter}
+        query={eventQuery}
+        onChangeScope={(next) => {
+          setEventScope(next);
+          setEventOffset(0);
+        }}
+        onChangeTimeRange={(next) => {
+          setEventTimeRange(next);
+          setEventOffset(0);
+        }}
+        onChangeEventTypeFilter={(next) => {
+          setEventTypeFilter(next);
+          setEventOffset(0);
+        }}
+        onChangeQuery={(next) => {
+          setEventQuery(next);
+          setEventOffset(0);
+        }}
+        onPagePrev={() => setEventOffset((cur) => Math.max(0, cur - EVENTS_PAGE_SIZE))}
+        onPageNext={() => {
+          if (!eventHasMore) return;
+          setEventOffset((cur) => cur + EVENTS_PAGE_SIZE);
+        }}
+        onBackToLatest={() => setEventOffset(0)}
+      />
+    ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
     history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
     connections: () => <ConnectionsCard connections={(displaySnapshot as any).connections} />,
