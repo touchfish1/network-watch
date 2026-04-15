@@ -105,6 +105,38 @@ jobs:
           prerelease: ${{ github.event_name == 'workflow_dispatch' && inputs.prerelease || false }}
           args: ${{ matrix.args }}
 
+      - name: Create zipped installers (Windows/macOS)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist-release
+
+          installers=()
+          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+            installers+=(src-tauri/target/release/bundle/nsis/*.exe)
+            installers+=(src-tauri/target/release/bundle/msi/*.msi)
+          elif [[ "${{ matrix.platform }}" == "macos-latest" ]]; then
+            installers+=(src-tauri/target/release/bundle/dmg/*.dmg)
+            installers+=(src-tauri/target/release/bundle/pkg/*.pkg)
+          fi
+
+          for installer in "${installers[@]}"; do
+            base_name="$(basename "$installer")"
+            zip_name="dist-release/${base_name}.zip"
+            zip -j "$zip_name" "$installer"
+            echo "Created: $zip_name"
+          done
+
+      - name: Upload zipped installers to GitHub Release
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'macos-latest'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          files: |
+            dist-release/*.zip
+
   # 独立 job：仅构建 Linux headless agent 并上传 Release，不使用 Node / 不与桌面矩阵共用 runner。
   # 使用 ubuntu-22.04（较旧 glibc）而非 24.04，避免产物要求 GLIBC_2.38+ 导致在旧版无 GUI Linux 上无法运行。
   publish-agent:
