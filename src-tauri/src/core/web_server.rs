@@ -200,7 +200,22 @@ async fn get_snapshot(State(st): State<WebState>) -> impl IntoResponse {
 }
 
 async fn get_machines(State(st): State<WebState>) -> impl IntoResponse {
-    let list = st.machines.0.read().await.clone();
+    let mut list = st.machines.0.read().await.clone();
+    let local_snapshot = st.latest.0.read().await.clone();
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or_default();
+    list.insert(
+        st.machine_id.clone(),
+        serde_json::json!({
+            "received_at_ms": now_ms,
+            "host_name": st.host_name,
+            "host_ips": st.host_ips,
+            "label": st.host_name,
+            "snapshot": local_snapshot,
+        }),
+    );
     Json(list)
 }
 

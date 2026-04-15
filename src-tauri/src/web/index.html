@@ -265,7 +265,15 @@
         const entries = Object.entries(data || {});
         meta.textContent = "在线节点 " + entries.length + " · 每 2s 刷新";
         if (!entries.length) {
+          // 边界：全部 agent 离线时，回退到“当前主机（本机）”视图，避免卡在已下线节点
+          selectedMachineId = null;
+          selectedMachineSnapshot = null;
           tbody.innerHTML = '<tr><td colspan="7" class="muted">暂无 agent 上报</td></tr>';
+          meta.textContent =
+            "在线节点 0" +
+            " · 当前 " + esc(guiName && guiName !== "—" ? guiName : guiMachineId) +
+            " · IP " + esc(guiIps) +
+            " · 每 2s 刷新";
           return;
         }
         const now = Date.now();
@@ -335,6 +343,9 @@
           });
         });
       } catch (e) {
+        // 边界：临时网络/后端抖动时，不要保持“远端主机选中态”
+        selectedMachineId = null;
+        selectedMachineSnapshot = null;
         meta.textContent = "拉取失败（/api/v1/machines）";
       }
     }

@@ -7,6 +7,8 @@
 //!
 //! Runtime env:
 //! - NETWORK_WATCH_MACHINE_ID
+//! - NETWORK_WATCH_WEB (default 1)
+//! - NETWORK_WATCH_WEB_BIND (default 0.0.0.0:17321)
 //! - NETWORK_WATCH_DISCOVERY_PORT (default 17322)
 //! - NETWORK_WATCH_DISCOVERY_INTERVAL_SECS (default 10)
 //! - NETWORK_WATCH_NODE_TTL_SECS (default 30)

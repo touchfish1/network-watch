@@ -88,7 +88,7 @@ fn print_env_only() {
   NETWORK_WATCH_PUSH_TIMEOUT_SECS   HTTP 请求超时（秒）
   NETWORK_WATCH_AGENT_FOREGROUND    Linux 前台运行（1/true，不守护进程）
   NETWORK_WATCH_AGENT_LOG           Linux 日志文件路径（默认当前目录 network-watch-agent.log）
-  NETWORK_WATCH_WEB / BIND          agent 内嵌可选 Web（ rarely 使用）
+  NETWORK_WATCH_WEB / BIND          agent 内嵌 Web（默认开启，支持通过 IP:端口访问）
 
 升级类
   NETWORK_WATCH_AGENT_GITHUB_REPO   owner/repo（默认 touchfish1/network-watch）

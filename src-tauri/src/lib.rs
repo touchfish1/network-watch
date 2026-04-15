@@ -331,6 +331,7 @@ pub fn run() {
                 .app_name("Network Watch")
                 .build(),
         )
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -439,8 +440,10 @@ fn run_agent_mode() {
     let capability_path = std::env::var("NETWORK_WATCH_CAPABILITY_PATH")
         .unwrap_or_else(|_| "/api/v1/capabilities".to_string());
 
-    // Agent 模式默认关闭内置 web，可用 NETWORK_WATCH_WEB=1 开启（便于本地排障）
-    if env_enabled("NETWORK_WATCH_WEB", false) {
+    // Agent 模式默认开启内置 web（便于通过 `IP:端口` 访问监控页）：
+    // - NETWORK_WATCH_WEB=0 可关闭
+    // - NETWORK_WATCH_WEB_BIND=0.0.0.0:17321 可覆盖绑定地址
+    if env_enabled("NETWORK_WATCH_WEB", true) {
         let (latest, tx) = core::web_server::new_state();
         let machines = core::web_server::new_machine_store();
         let bind = std::env::var("NETWORK_WATCH_WEB_BIND")

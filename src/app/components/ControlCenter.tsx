@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
@@ -202,17 +203,20 @@ export function ControlCenter({
           if (cancelled) {
             return;
           }
-          setOnlineMachines(machines);
+          // 边界：后端偶发返回非数组/脏数据时兜底，避免展开页空白
+          const safeMachines = Array.isArray(machines) ? machines : [];
+          setOnlineMachines(safeMachines);
           setSelectedMachineId((current) => {
-            if (current && machines.some((item) => item.machine_id === current)) {
+            if (current && safeMachines.some((item) => item.machine_id === current)) {
               return current;
             }
-            return machines[0]?.machine_id ?? null;
+            return safeMachines[0]?.machine_id ?? null;
           });
         })
         .catch(() => {
           if (!cancelled) {
             setOnlineMachines([]);
+            setSelectedMachineId(null);
           }
         });
     };
@@ -260,6 +264,19 @@ export function ControlCenter({
       // ignore
     });
   }, [displayWebUrl]);
+  const openWebUrl = useCallback(() => {
+    const url = displayWebUrl || DEFAULT_WEB_MONITOR_URL;
+    if (!url) {
+      return;
+    }
+    if (isTauri()) {
+      void openUrl(url).catch(() => {
+        window.open(url, "_blank", "noopener,noreferrer");
+      });
+      return;
+    }
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, [displayWebUrl]);
 
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
@@ -297,6 +314,31 @@ export function ControlCenter({
       />
     ),
   };
+  const cardTitles: Record<CardId, string> = {
+    overview: "系统总览",
+    online_hosts: "在线主机",
+    alerts: "告警",
+    history: "历史",
+    connections: "连接",
+    nic: "网卡",
+    process: "进程",
+    disk: "磁盘",
+    theme: "主题",
+    update: "在线升级",
+  };
+  const cardSummary: Record<CardId, string> = {
+    overview: `CPU ${formatPercent(snapshot.cpu_usage)} · ↓ ${formatRate(snapshot.network_download)}`,
+    online_hosts: `在线 ${onlineMachines.length} 台`,
+    alerts: `最近 ${alertRecords.length} 条`,
+    history: `样本 ${historySummary.sampleCount} 条`,
+    connections: snapshot.connections ? `总连接 ${snapshot.connections.total}` : "无连接统计",
+    nic: `网卡 ${snapshot.nics.length} 个`,
+    process: `进程 ${snapshot.process_count} 个`,
+    disk: `磁盘 ${snapshot.disks.length} 个`,
+    theme: `主题 ${themeDefinitions[theme].name}`,
+    update: updateState.message || "检查更新状态",
+  };
+  const safeCardOrder = cardOrder.filter((id) => typeof renderers[id] === "function");
 
   return (
     <div className={`expanded-panel ${expanded ? "expanded-panel-visible" : ""}`}>
@@ -336,6 +378,15 @@ export function ControlCenter({
             className="link-button"
             data-tauri-drag-region="false"
             disabled={!displayWebUrl}
+            onClick={openWebUrl}
+          >
+            打开
+          </button>
+          <button
+            type="button"
+            className="link-button"
+            data-tauri-drag-region="false"
+            disabled={!displayWebUrl}
             onClick={copyWebUrl}
           >
             复制
@@ -370,7 +421,19 @@ export function ControlCenter({
       />
 
       <section className="settings-panel">
-        {cardOrder.map((id) => (cardVisibility[id] ? <div key={`card-${id}`}>{renderers[id]()}</div> : null))}
+        {safeCardOrder.map((id) =>
+          cardVisibility[id] ? (
+            <div key={`card-${id}`} className={`card-shell card-shell-${id}`}>
+              <details className="card-fold" open>
+                <summary className="card-fold-summary">
+                  <span className="card-fold-title">{cardTitles[id]}</span>
+                  <span className="card-fold-mini-text">{cardSummary[id]}</span>
+                </summary>
+                <div className="card-fold-content">{renderers[id]()}</div>
+              </details>
+            </div>
+          ) : null,
+        )}
       </section>
 
       <div className={`details ${expanded ? "details-visible" : ""}`}>

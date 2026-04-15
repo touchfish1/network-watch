@@ -299,3 +299,68 @@
   grid-column: span 2;
 }
 
+.card-shell {
+  position: relative;
+}
+
+.card-shell-process,
+.card-shell-update {
+  grid-column: span 2;
+}
+
+.card-fold {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--panel) 92%, transparent);
+}
+
+.card-fold-summary {
+  cursor: pointer;
+  list-style: none;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 1px solid transparent;
+}
+
+.card-fold-title {
+  flex: 0 0 auto;
+}
+
+.card-fold-mini-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.card-fold > summary::-webkit-details-marker {
+  display: none;
+}
+
+.card-fold[open] .card-fold-summary {
+  border-bottom-color: var(--border);
+}
+
+.card-fold-content {
+  padding: 6px 0 0;
+}
+
+@media (max-width: 560px) {
+  .card-shell-process,
+  .card-shell-update {
+    grid-column: auto;
+  }
+}
+
