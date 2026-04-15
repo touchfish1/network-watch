@@ -11,6 +11,19 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine }
   const selectedMachine =
     machines.find((item) => item.machine_id === selectedMachineId) ?? machines[0] ?? null;
   const selectedLabel = selectedMachine?.label ?? selectedMachine?.host_name ?? selectedMachine?.machine_id ?? null;
+  const selectedSnapshot = selectedMachine?.snapshot ?? null;
+  const cpuUsage = typeof selectedSnapshot?.cpu_usage === "number" ? selectedSnapshot.cpu_usage : 0;
+  const memoryUsed = typeof selectedSnapshot?.memory_used === "number" ? selectedSnapshot.memory_used : 0;
+  const memoryTotal = typeof selectedSnapshot?.memory_total === "number" ? selectedSnapshot.memory_total : 0;
+  const networkDownload =
+    typeof selectedSnapshot?.network_download === "number" ? selectedSnapshot.network_download : 0;
+  const networkUpload =
+    typeof selectedSnapshot?.network_upload === "number" ? selectedSnapshot.network_upload : 0;
+  const uptimeSeconds = typeof selectedSnapshot?.uptime_seconds === "number" ? selectedSnapshot.uptime_seconds : 0;
+  const processCount = typeof selectedSnapshot?.process_count === "number" ? selectedSnapshot.process_count : 0;
+  const hostIps = Array.isArray(selectedMachine?.host_ips)
+    ? selectedMachine.host_ips.filter((ip): ip is string => typeof ip === "string" && ip.length > 0)
+    : [];
 
   return (
     <article className="settings-card online-hosts-card">
@@ -56,7 +69,7 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine }
           </div>
           <div className="kv-row">
             <span className="kv-key">IP</span>
-            <span className="kv-value">{selectedMachine.host_ips.length ? selectedMachine.host_ips.join(", ") : "—"}</span>
+            <span className="kv-value">{hostIps.length ? hostIps.join(", ") : "—"}</span>
           </div>
           <div className="kv-row">
             <span className="kv-key">机器标识</span>
@@ -65,20 +78,19 @@ export function OnlineHostsCard({ machines, selectedMachineId, onSelectMachine }
           <div className="kv-row">
             <span className="kv-key">CPU / 内存</span>
             <span className="kv-value">
-              {formatPercent(selectedMachine.snapshot.cpu_usage)} /{" "}
-              {formatMemoryUsage(selectedMachine.snapshot.memory_used, selectedMachine.snapshot.memory_total)}
+              {formatPercent(cpuUsage)} / {formatMemoryUsage(memoryUsed, memoryTotal)}
             </span>
           </div>
           <div className="kv-row">
             <span className="kv-key">网络（↓ / ↑）</span>
             <span className="kv-value">
-              ↓ {formatRate(selectedMachine.snapshot.network_download)} / ↑ {formatRate(selectedMachine.snapshot.network_upload)}
+              ↓ {formatRate(networkDownload)} / ↑ {formatRate(networkUpload)}
             </span>
           </div>
           <div className="kv-row">
             <span className="kv-key">运行时长 / 进程</span>
             <span className="kv-value">
-              {formatUptimeSeconds(selectedMachine.snapshot.uptime_seconds)} / {selectedMachine.snapshot.process_count}
+              {formatUptimeSeconds(uptimeSeconds)} / {processCount}
             </span>
           </div>
         </div>

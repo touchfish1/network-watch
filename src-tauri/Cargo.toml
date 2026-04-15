@@ -1,6 +1,6 @@
 [package]
 name = "src-tauri"
-version = "0.3.28"
+version = "0.3.29"
 edition = "2024"
 default-run = "src-tauri"
 
@@ -68,6 +68,8 @@ windows-sys = { version = "0.61.2", features = [
   "Win32_NetworkManagement_IpHelper",
   "Win32_Networking_WinSock",
 ] }
+
+
 
 
 

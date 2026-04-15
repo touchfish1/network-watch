@@ -245,6 +245,7 @@
       }
       return machineId;
     }
+    // null 表示“当前主机（GUI 本机）”；非 null 表示“已选择某个 agent”
     let selectedMachineId = null;
     let selectedMachineSnapshot = null;
     function applySelectedMachine() {
@@ -255,6 +256,9 @@
     async function refreshCluster() {
       const meta = document.getElementById("cluster_meta");
       const tbody = document.getElementById("cluster_rows");
+      const guiMachineId = "__MACHINE_ID__";
+      const guiName = "__HOST_NAME__";
+      const guiIps = "__HOST_IPS__";
       try {
         const res = await fetch("/api/v1/machines");
         const data = await res.json();
@@ -296,16 +300,18 @@
             '</tr>',
           };
         }).sort((a, b) => b.receivedAt - a.receivedAt);
-        if (!selectedMachineId || !rows.some((r) => r.id === selectedMachineId)) {
-          selectedMachineId = rows[0].id;
+        if (selectedMachineId && !rows.some((r) => r.id === selectedMachineId)) {
+          selectedMachineId = null;
         }
-        const current = rows.find((r) => r.id === selectedMachineId);
+        const current = selectedMachineId ? rows.find((r) => r.id === selectedMachineId) : null;
         selectedMachineSnapshot = current ? current.snapshot : null;
-        applySelectedMachine();
+        if (selectedMachineId) {
+          applySelectedMachine();
+        }
         meta.textContent =
           "在线节点 " + rows.length +
-          " · 当前 " + esc(current ? (current.label || current.hostName) : selectedMachineId) +
-          " · IP " + esc(current && current.hostIps.length ? current.hostIps.join(" / ") : "—") +
+          " · 当前 " + esc(current ? (current.label || current.hostName) : (guiName && guiName !== "—" ? guiName : guiMachineId)) +
+          " · IP " + esc(current && current.hostIps.length ? current.hostIps.join(" / ") : guiIps) +
           " · 每 2s 刷新";
         tbody.innerHTML = rows.map((r) => {
           const active = r.id === selectedMachineId;
@@ -316,9 +322,15 @@
             const id = tr.getAttribute("data-machine-id");
             const target = rows.find((r) => r.id === id);
             if (!target) return;
-            selectedMachineId = target.id;
-            selectedMachineSnapshot = target.snapshot;
-            applySelectedMachine();
+            // 再次点击当前选中项，切回“当前主机（本机）”
+            if (selectedMachineId === target.id) {
+              selectedMachineId = null;
+              selectedMachineSnapshot = null;
+            } else {
+              selectedMachineId = target.id;
+              selectedMachineSnapshot = target.snapshot;
+              applySelectedMachine();
+            }
             refreshCluster();
           });
         });
@@ -347,14 +359,22 @@
 
       meta.textContent = "GUI: " + guiLabel + " · agent 数量 " + agents.length + " · 点击表格可切换指标";
 
-      // 清空
       while (svg.firstChild) svg.removeChild(svg.firstChild);
 
       const W = 920, H = 360;
       const cx = W / 2, cy = H / 2;
-      const r = Math.min(W, H) * 0.34;
+      const r = Math.min(W, H) * 0.35;
 
-      // 线条
+      // 背景径向高光
+      const bg = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+      bg.setAttribute("cx", String(cx));
+      bg.setAttribute("cy", String(cy));
+      bg.setAttribute("rx", String(r + 36));
+      bg.setAttribute("ry", String(r * 0.72));
+      bg.setAttribute("fill", "rgba(56,189,248,0.06)");
+      svg.appendChild(bg);
+
+      // 连线
       for (let i = 0; i < agents.length; i++) {
         const ang = (Math.PI * 2 * i) / Math.max(1, agents.length) - Math.PI / 2;
         const x = cx + r * Math.cos(ang);
@@ -364,28 +384,95 @@
         line.setAttribute("y1", String(cy));
         line.setAttribute("x2", String(x));
         line.setAttribute("y2", String(y));
-        line.setAttribute("stroke", "rgba(255,255,255,0.14)");
-        line.setAttribute("stroke-width", "1");
+        line.setAttribute("stroke", "rgba(148,163,184,0.28)");
+        line.setAttribute("stroke-width", "1.5");
         svg.appendChild(line);
       }
 
-      // GUI 节点
-      const guiCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-      guiCircle.setAttribute("cx", String(cx));
-      guiCircle.setAttribute("cy", String(cy));
-      guiCircle.setAttribute("r", "28");
-      guiCircle.setAttribute("fill", "rgba(56,189,248,0.24)");
-      guiCircle.setAttribute("stroke", "rgba(56,189,248,0.65)");
-      guiCircle.setAttribute("stroke-width", "2");
-      svg.appendChild(guiCircle);
+      // 图标来源：Lucide / Tabler 风格路径（开源 MIT），做了简化内嵌
+      function drawGuiIcon(x, y) {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", `translate(${x - 12}, ${y - 12})`);
+        g.setAttribute("stroke", "rgba(229,246,255,0.96)");
+        g.setAttribute("stroke-width", "1.8");
+        g.setAttribute("fill", "none");
+        g.setAttribute("stroke-linecap", "round");
+        g.setAttribute("stroke-linejoin", "round");
 
+        const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        rect.setAttribute("x", "3");
+        rect.setAttribute("y", "4");
+        rect.setAttribute("width", "18");
+        rect.setAttribute("height", "12");
+        rect.setAttribute("rx", "2");
+        g.appendChild(rect);
+
+        const stand = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        stand.setAttribute("d", "M8 20h8 M12 16v4");
+        g.appendChild(stand);
+        svg.appendChild(g);
+      }
+
+      function drawAgentIcon(x, y) {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", `translate(${x - 10}, ${y - 10})`);
+        g.setAttribute("stroke", "rgba(238,242,255,0.95)");
+        g.setAttribute("stroke-width", "1.6");
+        g.setAttribute("fill", "none");
+        g.setAttribute("stroke-linecap", "round");
+        g.setAttribute("stroke-linejoin", "round");
+
+        const r1 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        r1.setAttribute("x", "0.8");
+        r1.setAttribute("y", "1.2");
+        r1.setAttribute("width", "18.4");
+        r1.setAttribute("height", "7.2");
+        r1.setAttribute("rx", "2");
+        g.appendChild(r1);
+        const r2 = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        r2.setAttribute("x", "0.8");
+        r2.setAttribute("y", "11.6");
+        r2.setAttribute("width", "18.4");
+        r2.setAttribute("height", "7.2");
+        r2.setAttribute("rx", "2");
+        g.appendChild(r2);
+
+        const dot1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot1.setAttribute("cx", "5");
+        dot1.setAttribute("cy", "4.8");
+        dot1.setAttribute("r", "0.8");
+        dot1.setAttribute("fill", "rgba(238,242,255,0.95)");
+        g.appendChild(dot1);
+        const dot2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot2.setAttribute("cx", "5");
+        dot2.setAttribute("cy", "15.2");
+        dot2.setAttribute("r", "0.8");
+        dot2.setAttribute("fill", "rgba(238,242,255,0.95)");
+        g.appendChild(dot2);
+        svg.appendChild(g);
+      }
+
+      function drawNodeShell(x, y, isGui) {
+        const outer = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        outer.setAttribute("cx", String(x));
+        outer.setAttribute("cy", String(y));
+        outer.setAttribute("r", isGui ? "30" : "22");
+        outer.setAttribute("fill", isGui ? "rgba(56,189,248,0.24)" : "rgba(148,163,184,0.16)");
+        outer.setAttribute("stroke", isGui ? "rgba(56,189,248,0.82)" : "rgba(203,213,225,0.38)");
+        outer.setAttribute("stroke-width", isGui ? "2.4" : "1.6");
+        svg.appendChild(outer);
+      }
+
+      // GUI 中心
+      drawNodeShell(cx, cy, true);
+      drawGuiIcon(cx, cy);
       const guiText = document.createElementNS("http://www.w3.org/2000/svg", "text");
       guiText.setAttribute("x", String(cx));
-      guiText.setAttribute("y", String(cy + 5));
+      guiText.setAttribute("y", String(cy + 48));
       guiText.setAttribute("text-anchor", "middle");
-      guiText.setAttribute("font-size", "12");
-      guiText.setAttribute("fill", "rgba(255,255,255,0.9)");
-      guiText.textContent = ellipsize(guiLabel, 18);
+      guiText.setAttribute("font-size", "11");
+      guiText.setAttribute("fill", "rgba(255,255,255,0.92)");
+      guiText.textContent = ellipsize(guiLabel, 20);
       svg.appendChild(guiText);
 
       // agent 节点
@@ -394,24 +481,17 @@
         const ang = (Math.PI * 2 * i) / Math.max(1, agents.length) - Math.PI / 2;
         const x = cx + r * Math.cos(ang);
         const y = cy + r * Math.sin(ang);
+        drawNodeShell(x, y, false);
+        drawAgentIcon(x, y);
 
-        const c = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-        c.setAttribute("cx", String(x));
-        c.setAttribute("cy", String(y));
-        c.setAttribute("r", "16");
-        c.setAttribute("fill", "rgba(255,255,255,0.06)");
-        c.setAttribute("stroke", "rgba(255,255,255,0.16)");
-        c.setAttribute("stroke-width", "1");
-        svg.appendChild(c);
-
-        const t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        t.setAttribute("x", String(x));
-        t.setAttribute("y", String(y + 4));
-        t.setAttribute("text-anchor", "middle");
-        t.setAttribute("font-size", "10");
-        t.setAttribute("fill", "rgba(255,255,255,0.88)");
-        t.textContent = ellipsize(a.label, 10);
-        svg.appendChild(t);
+        const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        label.setAttribute("x", String(x));
+        label.setAttribute("y", String(y + 34));
+        label.setAttribute("text-anchor", "middle");
+        label.setAttribute("font-size", "10");
+        label.setAttribute("fill", "rgba(226,232,240,0.95)");
+        label.textContent = ellipsize(a.label, 12);
+        svg.appendChild(label);
       }
 
       if (agents.length === 0) {
@@ -439,7 +519,8 @@
       es.onmessage = (ev) => {
         try {
           const env = JSON.parse(ev.data);
-          if (env && env.snapshot) apply(env.snapshot);
+          // 默认显示本机；仅在切换到其它主机时暂停本机 SSE 覆盖。
+          if (!selectedMachineId && env && env.snapshot) apply(env.snapshot);
         } catch {}
       };
       refreshCluster();
