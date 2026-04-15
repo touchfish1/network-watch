@@ -129,7 +129,7 @@ pub fn start_web_server(
         .layer(cors)
         .with_state(state);
 
-    tauri::async_runtime::spawn(async move {
+    let serve = async move {
         let listener = match tokio::net::TcpListener::bind(bind).await {
             Ok(v) => v,
             Err(err) => {
@@ -143,6 +143,18 @@ pub fn start_web_server(
         if let Err(err) = axum::serve(listener, app).await {
             eprintln!("[web] serve error: {err}");
         }
+    };
+
+    #[cfg(feature = "desktop")]
+    tauri::async_runtime::spawn(serve);
+
+    #[cfg(not(feature = "desktop"))]
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime for web server");
+        rt.block_on(serve);
     });
 }
 

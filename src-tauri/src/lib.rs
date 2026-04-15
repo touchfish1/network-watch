@@ -1,4 +1,3 @@
-#![cfg(feature = "desktop")]
 //! Tauri 后端入口与模块编排。
 //!
 //! 这个 crate 负责把几个相对独立的能力组合成一个“常驻置顶悬浮窗”应用：
@@ -9,33 +8,51 @@
 //! - `diagnostics`/`state`：跨线程状态与诊断数据（供前端排障/显示）
 //!
 //! 前端通过 `invoke` 调用少量命令（例如切换 overlay 交互性），并通过事件订阅接收采样快照。
+//!
+//! **特性**：`desktop` 为 GUI；`agent` 为独立 headless 二进制（见 `network-watch-agent`），二者可单独或同时启用。
+
+#[cfg(feature = "desktop")]
 mod constants;
-#[cfg(target_os = "windows")]
-mod click_through_bus;
-mod diagnostics;
-mod overlay;
-mod sampler;
+#[cfg(feature = "desktop")]
 mod state;
-mod tray;
-mod windowing;
+mod sampler;
 mod web_server;
-#[cfg(target_os = "windows")]
+
+#[cfg(feature = "desktop")]
+mod diagnostics;
+#[cfg(feature = "desktop")]
+mod overlay;
+#[cfg(feature = "desktop")]
+mod tray;
+#[cfg(feature = "desktop")]
+mod windowing;
+#[cfg(all(feature = "desktop", target_os = "windows"))]
+mod click_through_bus;
+#[cfg(all(feature = "desktop", target_os = "windows"))]
 mod windows_connections;
 
+#[cfg(feature = "desktop")]
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+#[cfg(feature = "desktop")]
 use diagnostics::get_runtime_diagnostics;
+#[cfg(feature = "desktop")]
 use overlay::set_overlay_interactive;
-#[cfg(target_os = "windows")]
+#[cfg(all(feature = "desktop", target_os = "windows"))]
 use overlay::set_click_through_enabled;
+
 use serde::Deserialize;
 use std::{
     collections::HashMap,
-    net::{Ipv4Addr, SocketAddr, UdpSocket},
+    net::{Ipv4Addr, UdpSocket},
     sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "desktop")]
+use std::net::SocketAddr;
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::Result<()> {
     if let Some(existing) = app.get_webview_window("settings") {
@@ -64,6 +81,7 @@ fn open_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::R
     Ok(())
 }
 
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn close_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::Result<()> {
     if let Some(window) = app.get_webview_window("settings") {
@@ -93,6 +111,7 @@ fn env_u64(key: &str, default_value: u64) -> u64 {
         .unwrap_or(default_value)
 }
 
+#[cfg(feature = "desktop")]
 fn parse_port(bind: &SocketAddr) -> u16 {
     bind.port()
 }
@@ -113,6 +132,7 @@ struct CapabilityResponse {
 const DISCOVERY_REQUEST: &str = "NW_DISCOVER_GUI_V1";
 const DISCOVERY_RESPONSE_PREFIX: &str = "NW_GUI_NODE_V1";
 
+#[cfg(feature = "desktop")]
 fn start_udp_discovery_responder(discovery_port: u16, web_port: u16) {
     thread::spawn(move || {
         let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, discovery_port)) {
@@ -141,12 +161,19 @@ fn start_udp_discovery_responder(discovery_port: u16, web_port: u16) {
 ///
 /// - `NETWORK_WATCH_AGENT=1`：启动 agent（不创建窗口）
 /// - 默认：启动桌面应用
+#[cfg(feature = "desktop")]
 pub fn run_entry() {
     if env_enabled("NETWORK_WATCH_AGENT", false) {
         run_agent_mode();
     } else {
         run();
     }
+}
+
+/// 独立 headless agent 二进制入口（`network-watch-agent`），不依赖 Tauri / 前端。
+#[cfg(feature = "agent")]
+pub fn run_standalone_agent() {
+    run_agent_mode();
 }
 
 /// 启动并运行 Tauri 应用（后端主入口）。
@@ -160,6 +187,7 @@ pub fn run_entry() {
 /// 说明：
 /// - 采样数据通过事件 `system-snapshot` 广播给前端（见 `constants::EVENT_SYSTEM_SNAPSHOT`）。
 /// - Windows 下会启动 topmost guard，以降低“被系统/其他窗口抢走置顶层级”的边缘问题（见 `overlay`）。
+#[cfg(feature = "desktop")]
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -216,9 +244,10 @@ pub fn run() {
         });
 }
 
+#[cfg(any(feature = "desktop", feature = "agent"))]
 fn run_agent_mode() {
     // Agent 模式关键环境变量（用于无 GUI Linux 部署）：
-    // - NETWORK_WATCH_AGENT=1                      启用 agent 模式
+    // - NETWORK_WATCH_AGENT=1                      启用 agent
     // - NETWORK_WATCH_MACHINE_ID=linux-node-01     上报机器标识
     // - NETWORK_WATCH_DISCOVERY_PORT=17322         UDP 广播发现端口
     // - NETWORK_WATCH_DISCOVERY_INTERVAL_SECS=10   发现周期
