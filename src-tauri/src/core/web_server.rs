@@ -65,6 +65,26 @@ struct IngestEnvelope {
     snapshot: serde_json::Value,
 }
 
+fn build_ingest_storage_key(payload: &IngestEnvelope) -> String {
+    // 多台 agent 可能使用相同 machine_id（例如默认值 agent-local），
+    // 这里拼接一个稳定“主机指纹”避免后写覆盖前写。
+    let host_hint = payload
+        .host_ips
+        .as_ref()
+        .and_then(|ips| ips.iter().find(|ip| !ip.trim().is_empty()).cloned())
+        .or_else(|| {
+            payload
+                .host_name
+                .as_ref()
+                .map(|name| name.trim().to_string())
+                .filter(|name| !name.is_empty())
+        });
+    match host_hint {
+        Some(hint) => format!("{}@{}", payload.machine_id, hint),
+        None => payload.machine_id.clone(),
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 struct CapabilitiesEnvelope {
@@ -223,11 +243,13 @@ async fn ingest_snapshot(
     State(st): State<WebState>,
     Json(payload): Json<IngestEnvelope>,
 ) -> impl IntoResponse {
+    let storage_key = build_ingest_storage_key(&payload);
     {
         let mut map = st.machines.0.write().await;
         map.insert(
-            payload.machine_id,
+            storage_key,
             serde_json::json!({
+                "machine_id": payload.machine_id,
                 "received_at_ms": SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)

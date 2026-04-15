@@ -394,7 +394,16 @@ fn run_agent_mode() {
     // - NETWORK_WATCH_CAPABILITY_PATH=/api/v1/capabilities
     // - NETWORK_WATCH_COLLECTOR=http://host:17321/api/v1/ingest 发现为空时兜底
     // - NETWORK_WATCH_PUSH_TIMEOUT_SECS=3          上报请求超时
-    let machine_id = std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "agent-local".to_string());
+    let machine_id = {
+        #[cfg(feature = "agent")]
+        {
+            crate::agent::machine_id_cmd::get_or_create_machine_id()
+        }
+        #[cfg(not(feature = "agent"))]
+        {
+            std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "agent-local".to_string())
+        }
+    };
     let collector_url = std::env::var("NETWORK_WATCH_COLLECTOR").ok();
     let host_name = hostname::get()
         .ok()

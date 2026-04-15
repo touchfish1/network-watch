@@ -3,4 +3,5 @@ pub mod cli;
 pub mod discovery;
 pub mod hosts_cmd;
 pub mod label_cmd;
+pub mod machine_id_cmd;
 pub mod upgrade;

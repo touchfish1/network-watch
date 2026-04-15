@@ -9,11 +9,11 @@ use clap::{Parser, Subcommand};
 #[command(name = "network-watch-agent")]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 #[command(
-    about = "Network Watch 无头 agent：采集指标、发现 GUI、上报；含 check/upgrade/hosts 等子命令",
+    about = "Network Watch 无头 agent：采集指标、发现 GUI、上报；含 check/upgrade/hosts/label/machine-id 等子命令",
     long_about = None
 )]
 #[command(
-    after_help = "简要：check=检查更新，upgrade=自更新，hosts=枚举局域网 GUI，guide=完整说明。\n常用环境：NETWORK_WATCH_MACHINE_ID、NETWORK_WATCH_COLLECTOR、NETWORK_WATCH_DISCOVERY_PORT。"
+    after_help = "简要：check=检查更新，upgrade=自更新，hosts=枚举局域网 GUI，label=标签，machine-id=机器标识，guide=完整说明。\n常用环境：NETWORK_WATCH_MACHINE_ID、NETWORK_WATCH_COLLECTOR、NETWORK_WATCH_DISCOVERY_PORT。"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -58,6 +58,19 @@ pub enum AgentCommand {
         /// 设置为指定 label（空则为查看）
         value: Option<String>,
         /// 清除已设置 label
+        #[arg(long)]
+        clear: bool,
+    },
+    /// 查看/设置本机 machine_id（上报主键）。
+    ///
+    /// - 不带参数：打印当前 machine_id；若未设置则自动生成 `agent-xxxxxxxx` 并写入配置
+    /// - 带参数：设置为给定 machine_id
+    /// - `--clear`：清除本地持久化 machine_id（下次运行会重新生成）
+    #[command(visible_alias = "machine_id")]
+    MachineId {
+        /// 设置为指定 machine_id（空则为查看）
+        value: Option<String>,
+        /// 清除已设置 machine_id
         #[arg(long)]
         clear: bool,
     },

@@ -3,7 +3,7 @@
 //! Build (no GUI deps):
 //!   cargo build -p src-tauri --release --no-default-features --features agent --bin network-watch-agent
 //!
-//! 子命令：`check`、`upgrade`、`hosts`、`guide`（`--help` 查看）。无子命令时为运行采集循环。
+//! 子命令：`check`、`upgrade`、`hosts`、`label`、`machine-id`、`guide`（`--help` 查看）。无子命令时为运行采集循环。
 //!
 //! Runtime env:
 //! - NETWORK_WATCH_MACHINE_ID
@@ -58,6 +58,12 @@ fn main() {
         }
         Some(AgentCommand::Label { value, clear }) => {
             if let Err(e) = network_watch_lib::agent::label_cmd::run_label(value, clear, &host_name) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+        Some(AgentCommand::MachineId { value, clear }) => {
+            if let Err(e) = network_watch_lib::agent::machine_id_cmd::run_machine_id(value, clear) {
                 eprintln!("{e}");
                 std::process::exit(1);
             }

@@ -1,6 +1,7 @@
 //! `hosts` / `guide` 子命令实现。
 
 use crate::agent::discovery::discover_gui_nodes_once;
+use crate::agent::machine_id_cmd::get_or_create_machine_id;
 use crate::env_u64;
 
 /// 列出发现的节点；可选将 JSON 推送到 `--push URL`。
@@ -36,8 +37,7 @@ pub fn run_hosts(wait_secs: u64, json: bool, push: Option<String>) -> Result<(),
             .timeout(std::time::Duration::from_secs(timeout))
             .build()
             .map_err(|e| e.to_string())?;
-        let machine_id =
-            std::env::var("NETWORK_WATCH_MACHINE_ID").unwrap_or_else(|_| "agent-local".to_string());
+        let machine_id = get_or_create_machine_id();
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
@@ -108,6 +108,7 @@ fn print_full_guide() {
   network-watch-agent upgrade      从 GitHub Release 自更新当前二进制
   network-watch-agent hosts        单次扫描局域网 GUI 节点，打印 base / ingest
   network-watch-agent label [VALUE] 查看/设置本机展示标签（Web/GUI 列表显示）
+  network-watch-agent machine-id [VALUE] 查看/设置 machine_id（上报主键）
   network-watch-agent hosts --push <URL>   扫描后将 JSON 列表 POST 到给定 URL
   network-watch-agent guide        本说明（同 help）
   network-watch-agent -h           clap 简短帮助
