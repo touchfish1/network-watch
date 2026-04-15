@@ -40,6 +40,8 @@ use overlay::set_overlay_interactive;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 use overlay::set_click_through_enabled;
 
+#[cfg(feature = "desktop")]
+use serde::Serialize;
 use serde::Deserialize;
 use std::{
     collections::HashMap,
@@ -88,6 +90,53 @@ fn close_settings_window<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> tauri::
         window.close()?;
     }
     Ok(())
+}
+
+/// 供展开态控制中心展示：是否与后端 `NETWORK_WATCH_WEB_*` 一致的本机访问地址。
+#[cfg(feature = "desktop")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebMonitorHint {
+    pub enabled: bool,
+    pub primary_url: Option<String>,
+    pub note: Option<String>,
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+fn get_web_monitor_hint() -> WebMonitorHint {
+    let enabled = env_enabled("NETWORK_WATCH_WEB", true);
+    if !enabled {
+        return WebMonitorHint {
+            enabled: false,
+            primary_url: None,
+            note: Some("已关闭（NETWORK_WATCH_WEB=0）".to_string()),
+        };
+    }
+
+    let bind: SocketAddr = std::env::var("NETWORK_WATCH_WEB_BIND")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or_else(|| "0.0.0.0:17321".parse().expect("default web bind"));
+
+    let port = bind.port();
+    let primary_url = match bind.ip() {
+        std::net::IpAddr::V4(v4) if v4.is_unspecified() => format!("http://127.0.0.1:{port}/"),
+        std::net::IpAddr::V6(v6) if v6.is_unspecified() => format!("http://127.0.0.1:{port}/"),
+        ip => format!("http://{ip}:{port}/"),
+    };
+
+    let note = if bind.ip().is_unspecified() {
+        Some(format!("局域网其他设备请使用「本机 IP:{port}」", port = port))
+    } else {
+        None
+    };
+
+    WebMonitorHint {
+        enabled: true,
+        primary_url: Some(primary_url),
+        note,
+    }
 }
 
 fn env_enabled(key: &str, default_value: bool) -> bool {
@@ -202,6 +251,7 @@ pub fn run() {
             set_overlay_interactive,
             open_settings_window,
             close_settings_window,
+            get_web_monitor_hint,
             get_runtime_diagnostics,
             #[cfg(target_os = "windows")]
             set_click_through_enabled

@@ -108,6 +108,13 @@ export type RuntimeDiagnostics = {
   last_snapshot_at_ms: number;
 };
 
+/** 后端 `get_web_monitor_hint` 返回值（camelCase）。 */
+export type WebMonitorHint = {
+  enabled: boolean;
+  primaryUrl: string | null;
+  note: string | null;
+};
+
 export type AlertRecord = {
   id: string;
   title: string;

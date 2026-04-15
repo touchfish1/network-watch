@@ -103,10 +103,11 @@ jobs:
           args: ${{ matrix.args }}
 
   # 独立 job：仅构建 Linux headless agent 并上传 Release，不使用 Node / 不与桌面矩阵共用 runner。
+  # 使用 ubuntu-22.04（较旧 glibc）而非 24.04，避免产物要求 GLIBC_2.38+ 导致在旧版无 GUI Linux 上无法运行。
   publish-agent:
     name: Linux agent (standalone)
     needs: prepare-release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
@@ -115,6 +116,13 @@ jobs:
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Install musl cross toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -122,14 +130,29 @@ jobs:
           workspaces: "./src-tauri -> target"
           key: agent
 
-      - name: Build network-watch-agent
+      - name: Build network-watch-agent (glibc, Ubuntu 22.04)
         run: |
           cd src-tauri
           cargo build --release --no-default-features --features agent --bin network-watch-agent
 
-      - name: Upload agent binary to GitHub Release
+      - name: Build network-watch-agent (musl static)
+        env:
+          CC_x86_64_unknown_linux_musl: x86_64-linux-musl-gcc
+        run: |
+          cd src-tauri
+          cargo build --release --target x86_64-unknown-linux-musl --no-default-features --features agent --bin network-watch-agent
+
+      - name: Stage agent artifacts for release
+        run: |
+          mkdir -p dist-agent
+          cp src-tauri/target/release/network-watch-agent dist-agent/network-watch-agent
+          cp src-tauri/target/x86_64-unknown-linux-musl/release/network-watch-agent dist-agent/network-watch-agent-musl
+          chmod +x dist-agent/network-watch-agent dist-agent/network-watch-agent-musl
+
+      - name: Upload agent binaries to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           files: |
-            src-tauri/target/release/network-watch-agent
+            dist-agent/network-watch-agent
+            dist-agent/network-watch-agent-musl

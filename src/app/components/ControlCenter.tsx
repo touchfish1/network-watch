@@ -1,11 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
-import { setClickThroughEnabled } from "../tauri";
+import { getWebMonitorHint, setClickThroughEnabled } from "../tauri";
+import type { WebMonitorHint } from "../types";
 import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
   defaultCardOrder,
@@ -29,6 +30,8 @@ import { UpdateCard } from "./control-center/UpdateCard";
 import type { ControlCenterProps } from "./control-center/types";
 import { ControlCenterSettingsModal } from "./control-center/ControlCenterSettingsModal";
 import { emitAppEvent } from "../stateBus";
+
+const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 
 /**
  * 展开态控制中心。
@@ -156,12 +159,66 @@ export function ControlCenter({
     saveCardVisibility(defaultCardVisibility);
   }, []);
 
-  const webUrl = "http://localhost:17321/";
+  const [tauriWebHint, setTauriWebHint] = useState<WebMonitorHint | null>(null);
+
+  useEffect(() => {
+    if (!expanded || !isTauri()) {
+      return;
+    }
+    let cancelled = false;
+    void getWebMonitorHint()
+      .then((hint) => {
+        if (!cancelled) {
+          setTauriWebHint(hint);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setTauriWebHint({
+            enabled: true,
+            primaryUrl: DEFAULT_WEB_MONITOR_URL,
+            note: null,
+          });
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded]);
+
+  const webMonitorHint = useMemo((): WebMonitorHint | null => {
+    if (!expanded) {
+      return null;
+    }
+    if (!isTauri()) {
+      return {
+        enabled: true,
+        primaryUrl: DEFAULT_WEB_MONITOR_URL,
+        note: "需在本机运行应用后，用浏览器打开上述地址",
+      };
+    }
+    return tauriWebHint;
+  }, [expanded, tauriWebHint]);
+
+  const displayWebUrl = useMemo(() => {
+    if (webMonitorHint?.primaryUrl) {
+      return webMonitorHint.primaryUrl;
+    }
+    if (webMonitorHint && !webMonitorHint.enabled) {
+      return "";
+    }
+    return DEFAULT_WEB_MONITOR_URL;
+  }, [webMonitorHint]);
+
   const copyWebUrl = useCallback(() => {
-    void navigator.clipboard?.writeText(webUrl).catch(() => {
+    const text = displayWebUrl || DEFAULT_WEB_MONITOR_URL;
+    if (!text) {
+      return;
+    }
+    void navigator.clipboard?.writeText(text).catch(() => {
       // ignore
     });
-  }, []);
+  }, [displayWebUrl]);
 
   const renderers: Record<CardId, () => React.ReactNode> = {
     overview: () => <OverviewCard lastUpdated={lastUpdated} snapshot={snapshot} />,
@@ -215,6 +272,32 @@ export function ControlCenter({
         onCollapse={onCollapse}
         onHeaderPointerDown={onHeaderPointerDown}
       />
+
+      {expanded ? (
+        <section className="web-hint" aria-label="Web 监控地址">
+          <span className="web-hint-label">Web 监控</span>
+          {webMonitorHint && !webMonitorHint.enabled ? (
+            <span className="web-hint-url web-hint-disabled">{webMonitorHint.note ?? "已关闭"}</span>
+          ) : (
+            <span className="web-hint-url" title={displayWebUrl}>
+              {displayWebUrl || "…"}
+            </span>
+          )}
+          <button
+            type="button"
+            className="link-button"
+            data-tauri-drag-region="false"
+            disabled={!displayWebUrl}
+            onClick={copyWebUrl}
+          >
+            复制
+          </button>
+          {webMonitorHint?.note && webMonitorHint.enabled ? (
+            <p className="web-hint-note">{webMonitorHint.note}</p>
+          ) : null}
+        </section>
+      ) : null}
+
       <ControlCenterSettingsModal
         open={showSettingsPopover}
         onClose={closeSettingsPopover}
@@ -240,14 +323,6 @@ export function ControlCenter({
 
       <section className="settings-panel">
         {cardOrder.map((id) => (cardVisibility[id] ? <div key={`card-${id}`}>{renderers[id]()}</div> : null))}
-      </section>
-
-      <section className="web-hint">
-        <span className="web-hint-label">Web</span>
-        <span className="web-hint-url">{webUrl}</span>
-        <button type="button" className="link-button" onClick={copyWebUrl}>
-          复制
-        </button>
       </section>
 
       <div className={`details ${expanded ? "details-visible" : ""}`}>

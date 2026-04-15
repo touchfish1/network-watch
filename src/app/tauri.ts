@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { RuntimeDiagnostics } from "./types";
+import type { RuntimeDiagnostics, WebMonitorHint } from "./types";
 
 /**
  * 统一封装 Tauri `invoke` 调用。
@@ -17,6 +17,11 @@ export async function setOverlayInteractive(interactive: boolean) {
  */
 export async function getRuntimeDiagnostics() {
   return await invoke<RuntimeDiagnostics>("get_runtime_diagnostics");
+}
+
+/** 与后端 Web 监控绑定一致的本机访问地址（用于控制中心展示）。 */
+export async function getWebMonitorHint() {
+  return await invoke<WebMonitorHint>("get_web_monitor_hint");
 }
 
 /**
