@@ -29,9 +29,14 @@ export function Sparkline({ values, tone }: SparklineProps) {
 
     const resize = () => chart.resize();
     window.addEventListener("resize", resize);
+    const observer = new ResizeObserver(() => {
+      chart.resize();
+    });
+    observer.observe(el);
 
     return () => {
       window.removeEventListener("resize", resize);
+      observer.disconnect();
       chart.dispose();
       chartRef.current = null;
     };
@@ -52,7 +57,10 @@ export function Sparkline({ values, tone }: SparklineProps) {
             ? styles.getPropertyValue("--download").trim()
             : styles.getPropertyValue("--upload").trim();
 
-    const safeValues = values.length > 0 ? values : [0];
+    const sanitized = values
+      .map((v) => (Number.isFinite(v) ? Number(v) : 0))
+      .map((v) => (v < 0 ? 0 : v));
+    const safeValues = sanitized.length > 0 ? sanitized : [0];
     const maxY = Math.max(1, ...safeValues);
 
     chart.setOption(
