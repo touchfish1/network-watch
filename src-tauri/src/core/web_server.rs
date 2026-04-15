@@ -8,7 +8,13 @@
 //! - 默认仅用于局域网/本机自用，不做复杂鉴权；可通过环境变量关闭或绑定到 127.0.0.1
 //! - SSE 用于推送快照，避免频繁轮询
 
-use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    path::PathBuf,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use axum::{
     extract::State,
@@ -23,6 +29,7 @@ use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::core::sampler::SystemSnapshot;
+use crate::core::history_store;
 
 #[derive(Clone)]
 pub struct LatestSnapshot(pub Arc<RwLock<Option<SystemSnapshot>>>);
@@ -43,6 +50,8 @@ struct WebState {
     host_ips: Vec<String>,
     role: String,
     ingest_url: String,
+    db_path: PathBuf,
+    last_seen: Arc<RwLock<HashMap<String, (u64, String, bool)>>>, // machine_id -> (last_seen_ms, label, is_stale)
 }
 
 #[derive(Serialize, Clone)]
@@ -118,6 +127,9 @@ pub fn start_web_server(
         .unwrap_or_else(|| "unknown".to_string());
     let host_ips = get_host_ips();
 
+    let db_path = history_store::default_db_path();
+    let _ = history_store::init_db(&db_path);
+
     let state = WebState {
         latest,
         machines,
@@ -137,6 +149,8 @@ pub fn start_web_server(
             }
         }),
         ingest_url: "/api/v1/ingest".to_string(),
+        db_path,
+        last_seen: Arc::new(RwLock::new(HashMap::new())),
     };
 
     let cors = CorsLayer::new()
@@ -144,16 +158,71 @@ pub fn start_web_server(
         .allow_methods(Any)
         .allow_headers(Any);
 
+    let last_seen_for_tick = state.last_seen.clone();
+    let db_for_tick = state.db_path.clone();
     let app = Router::new()
         .route("/", get(root_page))
         .route("/api/v1/health", get(health))
         .route("/api/v1/capabilities", get(capabilities))
         .route("/api/v1/snapshot", get(get_snapshot))
         .route("/api/v1/machines", get(get_machines))
+        .route("/api/v1/history", get(get_history))
+        .route("/api/v1/history/aggregate", get(get_history_aggregate))
+        .route("/api/v1/events", get(get_events))
         .route("/api/v1/stream", get(stream_sse))
         .route("/api/v1/ingest", post(ingest_snapshot))
         .layer(cors)
         .with_state(state);
+
+    // offline 检测：定期将超过阈值未上报的主机标记为 stale，并落盘 offline 事件（只触发一次）
+    {
+        let last_seen = last_seen_for_tick;
+        let db = db_for_tick;
+        let ttl_ms = std::env::var("NETWORK_WATCH_HOST_STALE_THRESHOLD_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(12_000);
+        let tick = async move {
+            loop {
+                let now = history_store::now_ms();
+                let mut to_offline: Vec<(String, String)> = Vec::<(String, String)>::new();
+                {
+                    let mut map: tokio::sync::RwLockWriteGuard<'_, HashMap<String, (u64, String, bool)>> =
+                        last_seen.write().await;
+                    for (mid, (seen, label, stale)) in map.iter_mut() {
+                        let is_now_stale = now.saturating_sub(*seen) > ttl_ms;
+                        if is_now_stale && !*stale {
+                            *stale = true;
+                            to_offline.push((mid.clone(), label.clone()));
+                        }
+                        if !is_now_stale && *stale {
+                            *stale = false;
+                        }
+                    }
+                }
+                for (mid, label) in to_offline {
+                    let db2 = db.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        history_store::insert_event(&db2, &mid, &label, "offline", now)
+                    })
+                    .await;
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        };
+
+        #[cfg(feature = "desktop")]
+        tauri::async_runtime::spawn(tick);
+
+        #[cfg(not(feature = "desktop"))]
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("tokio runtime for offline tick");
+            rt.block_on(tick);
+        });
+    }
 
     let serve = async move {
         let listener = match tokio::net::TcpListener::bind(bind).await {
@@ -186,6 +255,89 @@ pub fn start_web_server(
 
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct HistoryQuery {
+    machine_id: String,
+    range: Option<String>, // "24h" | "7d"
+}
+
+async fn get_history(
+    State(st): State<WebState>,
+    axum::extract::Query(q): axum::extract::Query<HistoryQuery>,
+) -> impl IntoResponse {
+    let now = history_store::now_ms();
+    let since_ms = match q.range.as_deref() {
+        Some("7d") => now.saturating_sub(7 * 24 * 60 * 60_000),
+        _ => now.saturating_sub(24 * 60 * 60_000),
+    };
+    let db = st.db_path.clone();
+    let mid = q.machine_id;
+    let result = tokio::task::spawn_blocking(move || history_store::query_metrics_since(&db, &mid, since_ms))
+        .await
+        .ok()
+        .and_then(|r| r.ok())
+        .unwrap_or_default();
+    Json(result)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct AggregateHistoryQuery {
+    range: Option<String>, // "24h" | "7d"
+}
+
+async fn get_history_aggregate(
+    State(st): State<WebState>,
+    axum::extract::Query(q): axum::extract::Query<AggregateHistoryQuery>,
+) -> impl IntoResponse {
+    let now = history_store::now_ms();
+    let since_ms = match q.range.as_deref() {
+        Some("7d") => now.saturating_sub(7 * 24 * 60 * 60_000),
+        _ => now.saturating_sub(24 * 60 * 60_000),
+    };
+    let db = st.db_path.clone();
+    let result =
+        tokio::task::spawn_blocking(move || history_store::query_metrics_aggregate_since(&db, since_ms))
+            .await
+            .ok()
+            .and_then(|r| r.ok())
+            .unwrap_or_default();
+    Json(result)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+struct EventsQuery {
+    machine_id: Option<String>,
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+}
+
+async fn get_events(
+    State(st): State<WebState>,
+    axum::extract::Query(q): axum::extract::Query<EventsQuery>,
+) -> impl IntoResponse {
+    let db = st.db_path.clone();
+    let mid = q
+        .machine_id
+        .and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    let since_ms = q.since_ms;
+    let until_ms = q.until_ms;
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let result = tokio::task::spawn_blocking(move || {
+        history_store::query_events(&db, mid.as_deref(), since_ms, until_ms, offset, limit)
+    })
+    .await
+    .ok()
+    .and_then(|r| r.ok())
+    .unwrap_or_default();
+    Json(result)
 }
 
 async fn capabilities(State(st): State<WebState>) -> impl IntoResponse {
@@ -236,6 +388,25 @@ async fn get_machines(State(st): State<WebState>) -> impl IntoResponse {
             "snapshot": local_snapshot,
         }),
     );
+
+    // 本机分钟级落盘（幂等 upsert）
+    if let Some(s) = st.latest.0.read().await.clone() {
+        let db = st.db_path.clone();
+        let mid = st.machine_id.clone();
+        let cpu = s.cpu_usage as f64;
+        let mem_pct = if s.memory_total > 0 {
+            (s.memory_used as f64 / s.memory_total as f64) * 100.0
+        } else {
+            0.0
+        };
+        let down = s.network_download as f64;
+        let up = s.network_upload as f64;
+        let ts = now_ms;
+        let _ = tokio::task::spawn_blocking(move || {
+            history_store::upsert_metrics_minute(&db, &mid, ts, cpu, mem_pct, down, up)
+        })
+        .await;
+    }
     Json(list)
 }
 
@@ -244,22 +415,58 @@ async fn ingest_snapshot(
     Json(payload): Json<IngestEnvelope>,
 ) -> impl IntoResponse {
     let storage_key = build_ingest_storage_key(&payload);
+    let now_ms = history_store::now_ms();
     {
         let mut map = st.machines.0.write().await;
         map.insert(
             storage_key,
             serde_json::json!({
                 "machine_id": payload.machine_id,
-                "received_at_ms": SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or_default(),
+                "received_at_ms": now_ms,
                 "host_name": payload.host_name,
                 "host_ips": payload.host_ips.unwrap_or_default(),
                 "label": payload.label,
                 "snapshot": payload.snapshot,
             }),
         );
+    }
+
+    // 事件流：online/offline（online 在 ingest 时触发；offline 由后台检查任务触发）
+    {
+        let label = payload
+            .label
+            .clone()
+            .or_else(|| payload.host_name.clone())
+            .unwrap_or_else(|| payload.machine_id.clone());
+        let mid = payload.machine_id.clone();
+        let mut last = st.last_seen.write().await;
+        let prev = last.get(&mid).cloned();
+        let was_stale = prev.map(|x| x.2).unwrap_or(true);
+        last.insert(mid.clone(), (now_ms, label.clone(), false));
+        if was_stale {
+            let db = st.db_path.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                history_store::insert_event(&db, &mid, &label, "online", now_ms)
+            })
+            .await;
+        }
+    }
+
+    // 分钟级指标落盘
+    {
+        let snap = &payload.snapshot;
+        let cpu = snap.get("cpu_usage").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let mem_used = snap.get("memory_used").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let mem_total = snap.get("memory_total").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let mem_pct = if mem_total > 0.0 { (mem_used / mem_total) * 100.0 } else { 0.0 };
+        let down = snap.get("network_download").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let up = snap.get("network_upload").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let db = st.db_path.clone();
+        let mid = payload.machine_id.clone();
+        let _ = tokio::task::spawn_blocking(move || {
+            history_store::upsert_metrics_minute(&db, &mid, now_ms, cpu, mem_pct, down, up)
+        })
+        .await;
     }
 
     (StatusCode::ACCEPTED, "ok").into_response()

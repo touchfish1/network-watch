@@ -103,6 +103,27 @@ pub struct OnlineMachine {
 }
 
 #[cfg(feature = "desktop")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPoint {
+    pub ts_ms: u64,
+    pub cpu: f64,
+    pub mem_pct: f64,
+    pub down: f64,
+    pub up: f64,
+}
+
+#[cfg(feature = "desktop")]
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostEvent {
+    pub ts_ms: u64,
+    pub machine_id: String,
+    pub label: String,
+    pub event_type: String,
+}
+
+#[cfg(feature = "desktop")]
 #[tauri::command]
 fn get_web_monitor_hint() -> WebMonitorHint {
     let enabled = env_enabled("NETWORK_WATCH_WEB", true);
@@ -181,6 +202,59 @@ async fn get_online_machines(
 
     list.sort_by(|a, b| b.received_at_ms.cmp(&a.received_at_ms));
     Ok(list)
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn get_machine_history(machine_id: String, range: Option<String>) -> Result<Vec<HistoryPoint>, String> {
+    let now = core::history_store::now_ms();
+    let since = match range.as_deref() {
+        Some("7d") => now.saturating_sub(7 * 24 * 60 * 60_000),
+        _ => now.saturating_sub(24 * 60 * 60_000),
+    };
+    let db = core::history_store::default_db_path();
+    let points = tokio::task::spawn_blocking(move || core::history_store::query_metrics_since(&db, &machine_id, since))
+        .await
+        .map_err(|e| e.to_string())??;
+    Ok(points
+        .into_iter()
+        .map(|p| HistoryPoint {
+            ts_ms: p.ts_ms,
+            cpu: p.cpu,
+            mem_pct: p.mem_pct,
+            down: p.down,
+            up: p.up,
+        })
+        .collect())
+}
+
+#[cfg(feature = "desktop")]
+#[tauri::command]
+async fn get_host_events(
+    machine_id: Option<String>,
+    since_ms: Option<u64>,
+    until_ms: Option<u64>,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> Result<Vec<HostEvent>, String> {
+    let db = core::history_store::default_db_path();
+    let lim = limit.unwrap_or(100).clamp(1, 500);
+    let off = offset.unwrap_or(0);
+    let mid = machine_id.and_then(|s| if s.trim().is_empty() { None } else { Some(s) });
+    let events = tokio::task::spawn_blocking(move || {
+        core::history_store::query_events(&db, mid.as_deref(), since_ms, until_ms, off, lim)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(events
+        .into_iter()
+        .map(|e| HostEvent {
+            ts_ms: e.ts_ms,
+            machine_id: e.machine_id,
+            label: e.label,
+            event_type: e.r#type,
+        })
+        .collect())
 }
 
 pub(crate) fn env_enabled(key: &str, default_value: bool) -> bool {
@@ -341,6 +415,8 @@ pub fn run() {
             close_settings_window,
             get_web_monitor_hint,
             get_online_machines,
+            get_machine_history,
+            get_host_events,
             get_runtime_diagnostics,
             #[cfg(target_os = "windows")]
             set_click_through_enabled

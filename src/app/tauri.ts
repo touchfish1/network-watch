@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 
-import type { OnlineMachine, RuntimeDiagnostics, WebMonitorHint } from "./types";
+import type { HostEvent, MachineHistoryPoint, OnlineMachine, RuntimeDiagnostics, WebMonitorHint } from "./types";
 
 /**
  * 统一封装 Tauri `invoke` 调用。
@@ -27,6 +27,26 @@ export async function getWebMonitorHint() {
 /** 获取 agent 上报到 GUI 的在线主机列表（按最近上报时间倒序）。 */
 export async function getOnlineMachines() {
   return await invoke<OnlineMachine[]>("get_online_machines");
+}
+
+export async function getMachineHistory(machineId: string, range: "24h" | "7d" = "24h") {
+  return await invoke<MachineHistoryPoint[]>("get_machine_history", { machineId, range });
+}
+
+export async function getHostEvents(params?: {
+  machineId?: string;
+  sinceMs?: number;
+  untilMs?: number;
+  offset?: number;
+  limit?: number;
+}) {
+  return await invoke<HostEvent[]>("get_host_events", {
+    machineId: params?.machineId,
+    sinceMs: params?.sinceMs,
+    untilMs: params?.untilMs,
+    offset: params?.offset,
+    limit: params?.limit ?? 100,
+  });
 }
 
 /**

@@ -3,6 +3,7 @@ import { CLICK_THROUGH_STORAGE_KEY } from "../constants";
 export type CardId =
   | "overview"
   | "online_hosts"
+  | "events"
   | "alerts"
   | "history"
   | "connections"
@@ -19,6 +20,7 @@ const STATUS_VISIBILITY_KEY = "network-watch-status-visibility-v1";
 export const defaultCardOrder: CardId[] = [
   "overview",
   "online_hosts",
+  "events",
   "alerts",
   "history",
   "connections",
@@ -30,6 +32,7 @@ export const defaultCardOrder: CardId[] = [
 export const defaultCardVisibility: Record<CardId, boolean> = {
   overview: true,
   online_hosts: true,
+  events: true,
   alerts: true,
   history: true,
   connections: true,

@@ -119,6 +119,57 @@
     </section>
 
     <section class="card">
+      <div class="k" style="margin-bottom:8px">历史趋势（SQLite 落盘）</div>
+      <div class="filter-row" style="margin-top:0">
+        <button id="hist_scope_current" class="pin pin-on" title="当前主机">当前主机</button>
+        <button id="hist_scope_all" class="pin" title="全部主机">全部主机</button>
+        <button id="hist_24h" class="pin pin-on" title="最近24小时">24h</button>
+        <button id="hist_7d" class="pin" title="最近7天">7d</button>
+        <span class="badge" id="hist_meta">—</span>
+      </div>
+      <div class="chart-grid" style="margin-top:10px">
+        <div class="chart-card">
+          <div class="chart-head"><span class="chart-title">CPU(历史)</span><span class="chart-value" id="hist_cpu_value">—</span></div>
+          <canvas id="hist_cpu" class="chart-canvas" width="420" height="86"></canvas>
+        </div>
+        <div class="chart-card">
+          <div class="chart-head"><span class="chart-title">内存%(历史)</span><span class="chart-value" id="hist_mem_value">—</span></div>
+          <canvas id="hist_mem" class="chart-canvas" width="420" height="86"></canvas>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="k" style="margin-bottom:8px">事件流（上线/离线）</div>
+      <div class="s muted" id="events_meta">等待数据…</div>
+      <div class="filter-row">
+        <button id="events_scope_current" class="pin pin-on" title="当前主机">当前主机</button>
+        <button id="events_scope_all" class="pin" title="全部主机">全部主机</button>
+        <button id="events_filter_all" class="pin pin-on" title="全部事件">全部</button>
+        <button id="events_filter_online" class="pin" title="仅上线">上线</button>
+        <button id="events_filter_offline" class="pin" title="仅离线">离线</button>
+        <button id="events_time_1h" class="pin pin-on" title="最近1小时">1h</button>
+        <button id="events_time_24h" class="pin" title="最近24小时">24h</button>
+        <button id="events_time_7d" class="pin" title="最近7天">7d</button>
+        <input id="events_filter_query" class="filter-input" placeholder="筛选主机名 / machine_id / IP" />
+        <button id="events_prev" class="pin" title="上一页">上一页</button>
+        <button id="events_next" class="pin" title="下一页">下一页</button>
+      </div>
+      <div style="margin-top:10px; overflow:auto">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th><th>主机</th><th>事件</th>
+            </tr>
+          </thead>
+          <tbody id="events_rows">
+            <tr><td colspan="3" class="muted">等待数据…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
       <div class="k" style="margin-bottom:8px">集群视图（/api/v1/machines）</div>
       <div class="s muted" id="cluster_meta">等待数据…</div>
       <div class="filter-row">
@@ -402,6 +453,44 @@
     let staleThresholdMs = loadStaleThresholdMs();
     let pinnedIds = loadPinned();
     let onlyPinned = false;
+    let historyRange = "24h";
+    let historyScope = "current";
+    let eventsTypeFilter = "all";
+    let eventsQuery = "";
+    let eventsScope = "current";
+    let eventsTimeRange = "1h";
+    let eventsOffset = 0;
+    const EVENTS_PAGE_SIZE = 30;
+    const HISTORY_ALL_CACHE_TTL_MS = 15000;
+    let historyAllCache = {
+      range: "",
+      at: 0,
+      data: [],
+    };
+    let historyAllInflight = null;
+
+    async function fetchAggregatedHistoryAll(range) {
+      const now = Date.now();
+      if (historyAllCache.range === range && now - historyAllCache.at <= HISTORY_ALL_CACHE_TTL_MS) {
+        return historyAllCache.data;
+      }
+      if (historyAllInflight) {
+        return historyAllInflight;
+      }
+      historyAllInflight = (async () => {
+        const merged = await fetch("/api/v1/history/aggregate?range=" + encodeURIComponent(range))
+          .then((r) => r.json())
+          .then((arr) => (Array.isArray(arr) ? arr : []))
+          .catch(() => []);
+        historyAllCache = { range, at: Date.now(), data: merged };
+        return merged;
+      })();
+      try {
+        return await historyAllInflight;
+      } finally {
+        historyAllInflight = null;
+      }
+    }
     function norm(s) { return String(s || "").toLowerCase(); }
     function matchesQuery(row, q) {
       if (!q) return true;
@@ -525,6 +614,7 @@
               applySelectedMachine();
             }
             refreshCluster();
+            refreshHistoryAndEvents();
           });
         });
         Array.from(tbody.querySelectorAll("button[data-pin]")).forEach((btn) => {
@@ -544,6 +634,90 @@
         selectedMachineId = null;
         selectedMachineSnapshot = null;
         meta.textContent = "拉取失败（/api/v1/machines）";
+      }
+    }
+
+    async function refreshHistoryAndEvents() {
+      const guiMachineId = "__MACHINE_ID__";
+      const mid = selectedMachineId || guiMachineId;
+      const histMeta = document.getElementById("hist_meta");
+      const eventsMeta = document.getElementById("events_meta");
+      const eventsRows = document.getElementById("events_rows");
+      try {
+        const eventsMachineId = eventsScope === "all" ? "" : mid;
+        const nowMs = Date.now();
+        const eventsSinceMs =
+          eventsTimeRange === "7d"
+            ? nowMs - 7 * 24 * 60 * 60 * 1000
+            : eventsTimeRange === "24h"
+              ? nowMs - 24 * 60 * 60 * 1000
+              : nowMs - 60 * 60 * 1000;
+        const evPromise = fetch(
+          "/api/v1/events?" +
+            "machine_id=" + encodeURIComponent(eventsMachineId) +
+            "&since_ms=" + encodeURIComponent(eventsSinceMs) +
+            "&until_ms=" + encodeURIComponent(nowMs) +
+            "&offset=" + encodeURIComponent(eventsOffset) +
+            "&limit=" + encodeURIComponent(EVENTS_PAGE_SIZE)
+        );
+
+        let hist = [];
+        if (historyScope === "all") {
+          hist = await fetchAggregatedHistoryAll(historyRange);
+        } else {
+          const histRes = await fetch("/api/v1/history?machine_id=" + encodeURIComponent(mid) + "&range=" + encodeURIComponent(historyRange));
+          hist = await histRes.json();
+        }
+
+        const evRes = await evPromise;
+        const events = await evRes.json();
+        const list = Array.isArray(hist) ? hist : [];
+        const cpu = list.map((x) => typeof x.cpu === "number" ? x.cpu : 0);
+        const mem = list.map((x) => typeof x.mem_pct === "number" ? x.mem_pct : 0);
+        drawLineChart("hist_cpu", [cpu], ["#38bdf8"], 100);
+        drawLineChart("hist_mem", [mem], ["#22c55e"], 100);
+        const histCpuValue = document.getElementById("hist_cpu_value");
+        const histMemValue = document.getElementById("hist_mem_value");
+        if (histCpuValue) histCpuValue.textContent = cpu.length ? fmtPct(cpu[cpu.length - 1]) : "—";
+        if (histMemValue) histMemValue.textContent = mem.length ? mem[mem.length - 1].toFixed(0) + "%" : "—";
+        if (histMeta) {
+          const scopeLabel = historyScope === "all" ? "全部主机聚合" : ("主机 " + mid);
+          histMeta.textContent = scopeLabel + " · " + historyRange + " · 点数 " + list.length;
+        }
+
+        const evs = Array.isArray(events) ? events : [];
+        const evFiltered = evs.filter((e) => {
+          if (eventsTypeFilter !== "all" && e.type !== eventsTypeFilter) return false;
+          if (!eventsQuery) return true;
+          const text = [e.label || "", e.machine_id || "", mid].join(" ").toLowerCase();
+          return text.includes(eventsQuery);
+        });
+        if (!evFiltered.length) {
+          if (eventsRows) eventsRows.innerHTML = '<tr><td colspan="3" class="muted">暂无事件</td></tr>';
+          if (eventsMeta) {
+            eventsMeta.textContent = eventsScope === "all" ? "暂无事件（全部主机）" : "暂无事件（当前主机）";
+          }
+        } else {
+          if (eventsRows) {
+            eventsRows.innerHTML = evFiltered.map((e) => {
+              const ts = typeof e.ts_ms === "number" ? new Date(e.ts_ms).toLocaleString() : "—";
+              const label = e.label || e.machine_id || "—";
+              const type = e.type === "online" ? "上线" : (e.type === "offline" ? "离线" : String(e.type || "—"));
+              return "<tr><td>" + esc(ts) + "</td><td>" + esc(label) + "</td><td>" + esc(type) + "</td></tr>";
+            }).join("");
+          }
+          if (eventsMeta) {
+            const scopeLabel = eventsScope === "all" ? "全部主机" : ("当前主机 " + mid);
+            eventsMeta.textContent =
+              scopeLabel +
+              " · " + eventsTimeRange +
+              " · 偏移 " + eventsOffset +
+              " · 当前页 " + evFiltered.length + " 条";
+          }
+        }
+      } catch {
+        if (histMeta) histMeta.textContent = "历史数据拉取失败";
+        if (eventsMeta) eventsMeta.textContent = "事件数据拉取失败";
       }
     }
 
@@ -798,6 +972,126 @@
           refreshCluster();
         });
       }
+      const hist24 = document.getElementById("hist_24h");
+      const hist7 = document.getElementById("hist_7d");
+      const histScopeCurrent = document.getElementById("hist_scope_current");
+      const histScopeAll = document.getElementById("hist_scope_all");
+      if (hist24 && hist7 && histScopeCurrent && histScopeAll) {
+        const applyHistBtn = () => {
+          hist24.className = "pin" + (historyRange === "24h" ? " pin-on" : "");
+          hist7.className = "pin" + (historyRange === "7d" ? " pin-on" : "");
+          histScopeCurrent.className = "pin" + (historyScope === "current" ? " pin-on" : "");
+          histScopeAll.className = "pin" + (historyScope === "all" ? " pin-on" : "");
+        };
+        applyHistBtn();
+        histScopeCurrent.addEventListener("click", () => {
+          historyScope = "current";
+          applyHistBtn();
+          refreshHistoryAndEvents();
+        });
+        histScopeAll.addEventListener("click", () => {
+          historyScope = "all";
+          applyHistBtn();
+          refreshHistoryAndEvents();
+        });
+        hist24.addEventListener("click", () => {
+          historyRange = "24h";
+          historyAllCache = { range: "", at: 0, data: [] };
+          applyHistBtn();
+          refreshHistoryAndEvents();
+        });
+        hist7.addEventListener("click", () => {
+          historyRange = "7d";
+          historyAllCache = { range: "", at: 0, data: [] };
+          applyHistBtn();
+          refreshHistoryAndEvents();
+        });
+      }
+      const eventsAllBtn = document.getElementById("events_filter_all");
+      const eventsOnBtn = document.getElementById("events_filter_online");
+      const eventsOffBtn = document.getElementById("events_filter_offline");
+      const eventsTime1hBtn = document.getElementById("events_time_1h");
+      const eventsTime24hBtn = document.getElementById("events_time_24h");
+      const eventsTime7dBtn = document.getElementById("events_time_7d");
+      const eventsQueryInput = document.getElementById("events_filter_query");
+      const eventsScopeCurrentBtn = document.getElementById("events_scope_current");
+      const eventsScopeAllBtn = document.getElementById("events_scope_all");
+      const eventsPrevBtn = document.getElementById("events_prev");
+      const eventsNextBtn = document.getElementById("events_next");
+      const applyEventFilterButtons = () => {
+        if (eventsAllBtn) eventsAllBtn.className = "pin" + (eventsTypeFilter === "all" ? " pin-on" : "");
+        if (eventsOnBtn) eventsOnBtn.className = "pin" + (eventsTypeFilter === "online" ? " pin-on" : "");
+        if (eventsOffBtn) eventsOffBtn.className = "pin" + (eventsTypeFilter === "offline" ? " pin-on" : "");
+        if (eventsScopeCurrentBtn) eventsScopeCurrentBtn.className = "pin" + (eventsScope === "current" ? " pin-on" : "");
+        if (eventsScopeAllBtn) eventsScopeAllBtn.className = "pin" + (eventsScope === "all" ? " pin-on" : "");
+        if (eventsTime1hBtn) eventsTime1hBtn.className = "pin" + (eventsTimeRange === "1h" ? " pin-on" : "");
+        if (eventsTime24hBtn) eventsTime24hBtn.className = "pin" + (eventsTimeRange === "24h" ? " pin-on" : "");
+        if (eventsTime7dBtn) eventsTime7dBtn.className = "pin" + (eventsTimeRange === "7d" ? " pin-on" : "");
+      };
+      applyEventFilterButtons();
+      if (eventsScopeCurrentBtn) eventsScopeCurrentBtn.addEventListener("click", () => {
+        eventsScope = "current";
+        eventsOffset = 0;
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsScopeAllBtn) eventsScopeAllBtn.addEventListener("click", () => {
+        eventsScope = "all";
+        eventsOffset = 0;
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsAllBtn) eventsAllBtn.addEventListener("click", () => {
+        eventsTypeFilter = "all";
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsOnBtn) eventsOnBtn.addEventListener("click", () => {
+        eventsTypeFilter = "online";
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsOffBtn) eventsOffBtn.addEventListener("click", () => {
+        eventsTypeFilter = "offline";
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsTime1hBtn) eventsTime1hBtn.addEventListener("click", () => {
+        eventsTimeRange = "1h";
+        eventsOffset = 0;
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsTime24hBtn) eventsTime24hBtn.addEventListener("click", () => {
+        eventsTimeRange = "24h";
+        eventsOffset = 0;
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsTime7dBtn) eventsTime7dBtn.addEventListener("click", () => {
+        eventsTimeRange = "7d";
+        eventsOffset = 0;
+        applyEventFilterButtons();
+        refreshHistoryAndEvents();
+      });
+      if (eventsQueryInput) {
+        eventsQueryInput.addEventListener("input", () => {
+          eventsQuery = String(eventsQueryInput.value || "").trim().toLowerCase();
+          refreshHistoryAndEvents();
+        });
+      }
+      if (eventsPrevBtn) {
+        eventsPrevBtn.addEventListener("click", () => {
+          eventsOffset = Math.max(0, eventsOffset - EVENTS_PAGE_SIZE);
+          refreshHistoryAndEvents();
+        });
+      }
+      if (eventsNextBtn) {
+        eventsNextBtn.addEventListener("click", () => {
+          eventsOffset += EVENTS_PAGE_SIZE;
+          refreshHistoryAndEvents();
+        });
+      }
       // 关系图与集群共享同一份数据源：/api/v1/machines
       try {
         const res = await fetch("/api/v1/machines");
@@ -805,6 +1099,7 @@
         renderGraph(Object.entries(data || {}));
       } catch {}
       setInterval(refreshCluster, 2000);
+      setInterval(refreshHistoryAndEvents, 5000);
       setInterval(async () => {
         try {
           const res = await fetch("/api/v1/machines");
@@ -812,6 +1107,7 @@
           renderGraph(Object.entries(data || {}));
         } catch {}
       }, 2000);
+      refreshHistoryAndEvents();
     }
     boot();
   </script>

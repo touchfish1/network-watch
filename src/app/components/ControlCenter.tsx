@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
-import { getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
+import { getHostEvents, getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
 import type { MetricHistory, OnlineMachine, SystemSnapshot, WebMonitorHint } from "../types";
 import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
@@ -27,6 +27,7 @@ import { NicCard } from "./control-center/NicCard";
 import { ProcessCard } from "./control-center/ProcessCard";
 import { DiskCard } from "./control-center/DiskCard";
 import { OnlineHostsCard } from "./control-center/OnlineHostsCard";
+import { HostEventsCard } from "./control-center/HostEventsCard";
 import { ThemeCard } from "./control-center/ThemeCard";
 import { UpdateModal } from "./control-center/UpdateModal";
 import type { ControlCenterProps } from "./control-center/types";
@@ -195,7 +196,6 @@ export function ControlCenter({
   );
   const [remoteHistoryByMachineId, setRemoteHistoryByMachineId] = useState<Record<string, MetricHistory>>({});
   const [hostEvents, setHostEvents] = useState<HostEvent[]>([]);
-  const lastStaleByMachineIdRef = useRef<Record<string, boolean>>({});
   const [hostStaleThresholdMs, setHostStaleThresholdMs] = useState(() =>
     typeof window !== "undefined" ? loadHostStaleThresholdMs() : DEFAULT_HOST_STALE_THRESHOLD_MS,
   );
@@ -257,8 +257,6 @@ export function ControlCenter({
           // 边界：后端偶发返回非数组/脏数据时兜底，避免展开页空白
           const safeMachines = Array.isArray(machines) ? machines : [];
           setOnlineMachines(safeMachines);
-          const now = Date.now();
-
           // 维护 remote history（每台 agent 独立）
           setRemoteHistoryByMachineId((current) => {
             const next: Record<string, MetricHistory> = { ...current };
@@ -294,34 +292,6 @@ export function ControlCenter({
             return next;
           });
 
-          // 上下线事件（基于 stale 判定阈值）
-          const nextStale: Record<string, boolean> = {};
-          for (const item of safeMachines) {
-            const ageMs = now - (typeof item.received_at_ms === "number" ? item.received_at_ms : 0);
-            const stale = ageMs > hostStaleThresholdMs;
-            nextStale[item.machine_id] = stale;
-          }
-          const prevStale = lastStaleByMachineIdRef.current;
-          lastStaleByMachineIdRef.current = nextStale;
-          const newEvents: HostEvent[] = [];
-          for (const item of safeMachines) {
-            const prev = prevStale[item.machine_id];
-            const cur = nextStale[item.machine_id];
-            if (typeof prev === "boolean" && prev !== cur) {
-              newEvents.push({
-                timestamp: now,
-                type: cur ? "offline" : "online",
-                machineId: item.machine_id,
-                label: item.label ?? item.host_name ?? item.machine_id,
-              });
-            }
-          }
-          if (newEvents.length) {
-            setHostEvents((current) => {
-              const merged = [...newEvents, ...current];
-              return merged.slice(0, 60);
-            });
-          }
           setSelectedMachineId((current) => {
             if (current && safeMachines.some((item) => item.machine_id === current)) {
               return current;
@@ -344,6 +314,36 @@ export function ControlCenter({
       if (timer) {
         window.clearInterval(timer);
       }
+    };
+  }, [expanded]);
+
+  useEffect(() => {
+    if (!expanded || !isTauri()) {
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    const pollEvents = () => {
+      void getHostEvents({ limit: 120 })
+        .then((events) => {
+          if (cancelled) return;
+          const mapped: HostEvent[] = (Array.isArray(events) ? events : []).map((e) => ({
+            timestamp: e.tsMs,
+            type: e.eventType === "online" ? "online" : "offline",
+            machineId: e.machineId,
+            label: e.label,
+          }));
+          setHostEvents(mapped);
+        })
+        .catch(() => {
+          // ignore, keep last events in UI
+        });
+    };
+    pollEvents();
+    timer = window.setInterval(pollEvents, 5000);
+    return () => {
+      cancelled = true;
+      if (timer) window.clearInterval(timer);
     };
   }, [expanded]);
 
@@ -421,6 +421,7 @@ export function ControlCenter({
         events={hostEvents}
       />
     ),
+    events: () => <HostEventsCard events={hostEvents} selectedMachineId={selectedMachineId} />,
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
     history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
     connections: () => <ConnectionsCard connections={(displaySnapshot as any).connections} />,
@@ -445,6 +446,7 @@ export function ControlCenter({
   const cardTitles: Record<CardId, string> = {
     overview: "系统总览",
     online_hosts: "在线主机",
+    events: "事件流",
     alerts: "告警",
     history: "历史",
     connections: "连接",
@@ -456,6 +458,7 @@ export function ControlCenter({
   const cardSummary: Record<CardId, string> = {
     overview: `CPU ${formatPercent((displaySnapshot as any).cpu_usage ?? 0)} · ↓ ${formatRate((displaySnapshot as any).network_download ?? 0)}`,
     online_hosts: `在线 ${onlineMachines.length} 台`,
+    events: `事件 ${hostEvents.length} 条`,
     alerts: `最近 ${alertRecords.length} 条`,
     history: `样本 ${historySummary.sampleCount} 条`,
     connections: (displaySnapshot as any).connections ? `总连接 ${(displaySnapshot as any).connections.total}` : "无连接统计",

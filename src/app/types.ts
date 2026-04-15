@@ -125,6 +125,21 @@ export type OnlineMachine = {
   snapshot: SystemSnapshot;
 };
 
+export type MachineHistoryPoint = {
+  tsMs: number;
+  cpu: number;
+  memPct: number;
+  down: number;
+  up: number;
+};
+
+export type HostEvent = {
+  tsMs: number;
+  machineId: string;
+  label: string;
+  eventType: "online" | "offline" | string;
+};
+
 export type AlertRecord = {
   id: string;
   title: string;
