@@ -6,7 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { formatMemoryUsage, formatPercent, formatRate } from "../utils";
 import { themeDefinitions } from "../themes";
 import { Sparkline } from "./Sparkline";
-import { getHostEvents, getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
+import { getOnlineMachines, getWebMonitorHint, setClickThroughEnabled } from "../tauri";
 import type { MetricHistory, OnlineMachine, SystemSnapshot, WebMonitorHint } from "../types";
 import { CLICK_THROUGH_CHANGED_EVENT, CLICK_THROUGH_STORAGE_KEY } from "../constants";
 import {
@@ -27,7 +27,6 @@ import { NicCard } from "./control-center/NicCard";
 import { ProcessCard } from "./control-center/ProcessCard";
 import { DiskCard } from "./control-center/DiskCard";
 import { OnlineHostsCard } from "./control-center/OnlineHostsCard";
-import { HostEventsCard } from "./control-center/HostEventsCard";
 import { ThemeCard } from "./control-center/ThemeCard";
 import { UpdateModal } from "./control-center/UpdateModal";
 import type { ControlCenterProps } from "./control-center/types";
@@ -38,15 +37,6 @@ import { loadPinnedHostIds, savePinnedHostIds } from "../config/pinnedHosts";
 
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 const REMOTE_HISTORY_MAX_POINTS = 60;
-const EVENTS_PAGE_SIZE = 30;
-
-type HostEventType = "online" | "offline";
-type HostEvent = {
-  timestamp: number;
-  type: HostEventType;
-  machineId: string;
-  label: string;
-};
 
 function pushHistoryValue(arr: number[], value: number, max: number) {
   const next = [...arr, value];
@@ -196,14 +186,6 @@ export function ControlCenter({
     typeof window !== "undefined" ? loadPinnedHostIds() : [],
   );
   const [remoteHistoryByMachineId, setRemoteHistoryByMachineId] = useState<Record<string, MetricHistory>>({});
-  const [hostEvents, setHostEvents] = useState<HostEvent[]>([]);
-  const [eventScope, setEventScope] = useState<"current" | "all">("current");
-  const [eventTimeRange, setEventTimeRange] = useState<"1h" | "24h" | "7d">("1h");
-  const [eventTypeFilter, setEventTypeFilter] = useState<"all" | HostEventType>("all");
-  const [eventQuery, setEventQuery] = useState("");
-  const [eventOffset, setEventOffset] = useState(0);
-  const [eventHasMore, setEventHasMore] = useState(false);
-  const [eventLoading, setEventLoading] = useState(false);
   const [hostStaleThresholdMs, setHostStaleThresholdMs] = useState(() =>
     typeof window !== "undefined" ? loadHostStaleThresholdMs() : DEFAULT_HOST_STALE_THRESHOLD_MS,
   );
@@ -325,62 +307,6 @@ export function ControlCenter({
     };
   }, [expanded]);
 
-  useEffect(() => {
-    if (!expanded || !isTauri()) {
-      return;
-    }
-    let cancelled = false;
-    let timer: number | undefined;
-    const pollEvents = () => {
-      const now = Date.now();
-      const sinceMs =
-        eventTimeRange === "7d"
-          ? now - 7 * 24 * 60 * 60 * 1000
-          : eventTimeRange === "24h"
-            ? now - 24 * 60 * 60 * 1000
-            : now - 60 * 60 * 1000;
-      const machineId = eventScope === "current" ? (selectedMachineId ?? undefined) : undefined;
-      setEventLoading(true);
-      void getHostEvents({
-        machineId,
-        sinceMs,
-        untilMs: now,
-        eventType: eventTypeFilter,
-        query: eventQuery,
-        offset: eventOffset,
-        limit: EVENTS_PAGE_SIZE,
-      })
-        .then((events) => {
-          if (cancelled) return;
-          const safe = Array.isArray(events) ? events : [];
-          setEventHasMore(safe.length >= EVENTS_PAGE_SIZE);
-          if (!safe.length && eventOffset > 0) {
-            setEventOffset((cur) => Math.max(0, cur - EVENTS_PAGE_SIZE));
-            return;
-          }
-          const mapped: HostEvent[] = (Array.isArray(events) ? events : []).map((e) => ({
-            timestamp: e.tsMs,
-            type: e.eventType === "online" ? "online" : "offline",
-            machineId: e.machineId,
-            label: e.label,
-          }));
-          setHostEvents(mapped);
-        })
-        .catch(() => {
-          // ignore, keep last events in UI
-        })
-        .finally(() => {
-          if (!cancelled) setEventLoading(false);
-        });
-    };
-    pollEvents();
-    timer = window.setInterval(pollEvents, 5000);
-    return () => {
-      cancelled = true;
-      if (timer) window.clearInterval(timer);
-    };
-  }, [eventOffset, eventQuery, eventScope, eventTimeRange, eventTypeFilter, expanded, selectedMachineId]);
-
   const selectedRemoteMachine = useMemo(() => {
     if (!selectedMachineId) return null;
     return onlineMachines.find((m) => m.machine_id === selectedMachineId) ?? null;
@@ -452,43 +378,6 @@ export function ControlCenter({
         staleThresholdMs={hostStaleThresholdMs}
         pinnedMachineIds={pinnedMachineIds}
         onTogglePinned={togglePinnedMachine}
-        events={hostEvents}
-      />
-    ),
-    events: () => (
-      <HostEventsCard
-        events={hostEvents}
-        selectedMachineId={selectedMachineId}
-        scope={eventScope}
-        timeRange={eventTimeRange}
-        offset={eventOffset}
-        pageSize={EVENTS_PAGE_SIZE}
-        hasMore={eventHasMore}
-        loading={eventLoading}
-        eventTypeFilter={eventTypeFilter}
-        query={eventQuery}
-        onChangeScope={(next) => {
-          setEventScope(next);
-          setEventOffset(0);
-        }}
-        onChangeTimeRange={(next) => {
-          setEventTimeRange(next);
-          setEventOffset(0);
-        }}
-        onChangeEventTypeFilter={(next) => {
-          setEventTypeFilter(next);
-          setEventOffset(0);
-        }}
-        onChangeQuery={(next) => {
-          setEventQuery(next);
-          setEventOffset(0);
-        }}
-        onPagePrev={() => setEventOffset((cur) => Math.max(0, cur - EVENTS_PAGE_SIZE))}
-        onPageNext={() => {
-          if (!eventHasMore) return;
-          setEventOffset((cur) => cur + EVENTS_PAGE_SIZE);
-        }}
-        onBackToLatest={() => setEventOffset(0)}
       />
     ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
@@ -515,7 +404,6 @@ export function ControlCenter({
   const cardTitles: Record<CardId, string> = {
     overview: "系统总览",
     online_hosts: "在线主机",
-    events: "事件流",
     alerts: "告警",
     history: "历史",
     connections: "连接",
@@ -527,7 +415,6 @@ export function ControlCenter({
   const cardSummary: Record<CardId, string> = {
     overview: `CPU ${formatPercent((displaySnapshot as any).cpu_usage ?? 0)} · ↓ ${formatRate((displaySnapshot as any).network_download ?? 0)}`,
     online_hosts: `在线 ${onlineMachines.length} 台`,
-    events: `事件 ${hostEvents.length} 条`,
     alerts: `最近 ${alertRecords.length} 条`,
     history: `样本 ${historySummary.sampleCount} 条`,
     connections: (displaySnapshot as any).connections ? `总连接 ${(displaySnapshot as any).connections.total}` : "无连接统计",

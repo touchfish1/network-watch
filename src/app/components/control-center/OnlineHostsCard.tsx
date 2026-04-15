@@ -9,12 +9,6 @@ export type OnlineHostsCardProps = {
   staleThresholdMs: number;
   pinnedMachineIds: string[];
   onTogglePinned: (machineId: string) => void;
-  events: Array<{
-    timestamp: number;
-    type: "online" | "offline";
-    machineId: string;
-    label: string;
-  }>;
 };
 
 export function OnlineHostsCard({
@@ -24,7 +18,6 @@ export function OnlineHostsCard({
   staleThresholdMs,
   pinnedMachineIds,
   onTogglePinned,
-  events,
 }: OnlineHostsCardProps) {
   const [query, setQuery] = useState("");
   const [onlyPinned, setOnlyPinned] = useState(false);
@@ -212,12 +205,7 @@ export function OnlineHostsCard({
               {formatUptimeSeconds(uptimeSeconds)} / {processCount}
             </span>
           </div>
-          <div className="kv-row">
-            <span className="kv-key">事件</span>
-            <span className="kv-value muted" style={{ fontWeight: 600 }}>
-              {events.length ? `${events[0].type === "online" ? "上线" : "离线"} · ${new Date(events[0].timestamp).toLocaleTimeString()}` : "—"}
-            </span>
-          </div>
+          {/* 事件流已移除 */}
         </div>
       ) : null}
     </article>
