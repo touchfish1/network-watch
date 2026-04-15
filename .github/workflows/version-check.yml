@@ -1,0 +1,22 @@
+name: version-check
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  verify-version-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Verify package/tauri/cargo version consistency
+        run: npm run version:check

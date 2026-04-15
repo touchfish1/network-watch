@@ -31,6 +31,17 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::core::sampler::SystemSnapshot;
 use crate::core::history_store;
 
+fn ingest_allowed(sender_role: Option<&str>, hop_count: u8) -> bool {
+    // 允许 agent 与 GUI 双向上报；旧版本未携带 sender_role 时也放行。
+    if let Some(role) = sender_role {
+        let r = role.trim().to_ascii_lowercase();
+        if r != "agent" && r != "desktop_gui" {
+            return false;
+        }
+    }
+    hop_count <= 1
+}
+
 #[derive(Clone)]
 pub struct LatestSnapshot(pub Arc<RwLock<Option<SystemSnapshot>>>);
 
@@ -67,6 +78,10 @@ struct IngestEnvelope {
     machine_id: String,
     #[serde(default)]
     sender_role: Option<String>,
+    #[serde(default)]
+    origin_machine_id: Option<String>,
+    #[serde(default)]
+    hop_count: Option<u8>,
     #[serde(default)]
     host_name: Option<String>,
     #[serde(default)]
@@ -429,20 +444,14 @@ async fn ingest_snapshot(
     State(st): State<WebState>,
     Json(payload): Json<IngestEnvelope>,
 ) -> impl IntoResponse {
-    // 兼容 agent 与 gui 双向上报；旧版本未携带 sender_role 时也放行。
-    if let Some(sender_role) = payload
-        .sender_role
-        .as_deref()
-        .map(|v| v.trim().to_ascii_lowercase())
-    {
-        if sender_role != "agent" && sender_role != "desktop_gui" {
-            return (
-                StatusCode::FORBIDDEN,
-                "forbidden: ingest accepts agent/desktop_gui sender only",
-            )
-                .into_response();
-        }
+    let hop_count = payload.hop_count.unwrap_or(0);
+    if !ingest_allowed(payload.sender_role.as_deref(), hop_count) {
+        return (StatusCode::FORBIDDEN, "forbidden: ingest rejected").into_response();
     }
+    let origin_machine_id = payload
+        .origin_machine_id
+        .clone()
+        .unwrap_or_else(|| payload.machine_id.clone());
 
     let storage_key = build_ingest_storage_key(&payload);
     let now_ms = history_store::now_ms();
@@ -452,6 +461,8 @@ async fn ingest_snapshot(
             storage_key,
             serde_json::json!({
                 "machine_id": payload.machine_id,
+                "origin_machine_id": origin_machine_id,
+                "hop_count": hop_count,
                 "received_at_ms": now_ms,
                 "host_name": payload.host_name,
                 "host_ips": payload.host_ips.unwrap_or_default(),
@@ -541,5 +552,34 @@ pub(crate) fn get_host_ips() -> Vec<String> {
     // 排序：让输出稳定（大多数情况下 v4 在前）
     ips.sort_by(|a, b| a.len().cmp(&b.len()).then(a.cmp(b)));
     ips
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ingest_allowed;
+
+    #[test]
+    fn ingest_allows_legacy_no_role() {
+        assert!(ingest_allowed(None, 0));
+        assert!(ingest_allowed(None, 1));
+    }
+
+    #[test]
+    fn ingest_rejects_unknown_role() {
+        assert!(!ingest_allowed(Some("evil"), 0));
+    }
+
+    #[test]
+    fn ingest_rejects_hop_gt_one() {
+        assert!(!ingest_allowed(Some("agent"), 2));
+        assert!(!ingest_allowed(None, 2));
+    }
+
+    #[test]
+    fn ingest_allows_agent_and_gui() {
+        assert!(ingest_allowed(Some("agent"), 0));
+        assert!(ingest_allowed(Some("desktop_gui"), 1));
+        assert!(ingest_allowed(Some(" DESKTOP_GUI "), 0));
+    }
 }
 

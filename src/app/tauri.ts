@@ -19,6 +19,10 @@ export async function getRuntimeDiagnostics() {
   return await invoke<RuntimeDiagnostics>("get_runtime_diagnostics");
 }
 
+export async function exportDiagnosticsReport(minutes = 10) {
+  return await invoke<string>("export_diagnostics_report", { minutes });
+}
+
 /** 与后端 Web 监控绑定一致的本机访问地址（用于控制中心展示）。 */
 export async function getWebMonitorHint() {
   return await invoke<WebMonitorHint>("get_web_monitor_hint");

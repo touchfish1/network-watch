@@ -91,6 +91,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
 
+      - name: Check version consistency
+        run: npm run version:check
+
       - name: Build and upload release
         uses: tauri-apps/tauri-action@action-v0.6.2
         env:
@@ -115,6 +118,11 @@ jobs:
           $installers = @()
           $installers += Get-ChildItem -Path "src-tauri/target/release/bundle/nsis" -Filter "*.exe" -File -ErrorAction SilentlyContinue
           $installers += Get-ChildItem -Path "src-tauri/target/release/bundle/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue
+          if ($installers.Count -eq 0) {
+            Write-Host "No Windows installers found under src-tauri/target/release/bundle"
+            Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -ErrorAction SilentlyContinue
+            throw "Missing Windows installers (.exe/.msi)"
+          }
 
           foreach ($installer in $installers) {
             $zipName = Join-Path "dist-release" ($installer.Name + ".zip")
@@ -122,6 +130,32 @@ jobs:
             Compress-Archive -Path $installer.FullName -DestinationPath $zipName
             Write-Host "Created: $zipName"
           }
+
+      - name: Generate SHA256SUMS (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path dist-release | Out-Null
+          $outFile = Join-Path "dist-release" "SHA256SUMS-windows.txt"
+          if (Test-Path $outFile) { Remove-Item -Force $outFile }
+
+          $files = @()
+          $files += Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -Include "*.exe","*.msi" -File -ErrorAction SilentlyContinue
+          $files += Get-ChildItem -Path "dist-release" -Filter "*.zip" -File -ErrorAction SilentlyContinue
+
+          if ($files.Count -eq 0) {
+            Write-Host "No files found for checksum generation."
+            Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -ErrorAction SilentlyContinue
+            throw "Missing release artifacts for checksums"
+          }
+
+          foreach ($f in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 -Path $f.FullName).Hash.ToLowerInvariant()
+            $rel = $f.FullName.Replace((Resolve-Path ".").Path + "\", "").Replace("\", "/")
+            Add-Content -Path $outFile -Value "$hash  $rel"
+          }
+          Write-Host "Wrote: $outFile"
 
       - name: Create zipped installers (macOS)
         if: matrix.platform == 'macos-latest'
@@ -135,6 +169,11 @@ jobs:
             src-tauri/target/release/bundle/dmg/*.dmg
             src-tauri/target/release/bundle/pkg/*.pkg
           )
+          if [[ ${#installers[@]} -eq 0 ]]; then
+            echo "No macOS installers found under src-tauri/target/release/bundle"
+            ls -laR src-tauri/target/release/bundle || true
+            exit 1
+          fi
 
           for installer in "${installers[@]}"; do
             base_name="$(basename "$installer")"
@@ -143,6 +182,68 @@ jobs:
             echo "Created: $zip_name"
           done
 
+      - name: Generate SHA256SUMS (macOS)
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          out_file="dist-release/SHA256SUMS-macos.txt"
+          rm -f "$out_file"
+
+          files=(
+            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/release/bundle/pkg/*.pkg
+            dist-release/*.zip
+          )
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No files found for checksum generation."
+            ls -laR src-tauri/target/release/bundle || true
+            exit 1
+          fi
+
+          for f in "${files[@]}"; do
+            h="$(shasum -a 256 "$f" | awk '{print $1}')"
+            echo "$h  $f" >> "$out_file"
+          done
+          echo "Wrote: $out_file"
+
+      - name: Generate SHA256SUMS (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-release
+          out_file="dist-release/SHA256SUMS-linux.txt"
+          rm -f "$out_file"
+
+          mapfile -t files < <(find src-tauri/target/release/bundle -type f \( -name "*.AppImage" -o -name "*.deb" -o -name "*.rpm" -o -name "*.tar.gz" -o -name "*.gz" \) 2>/dev/null || true)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No Linux bundle artifacts found for checksum generation."
+            ls -laR src-tauri/target/release/bundle || true
+            exit 1
+          fi
+
+          for f in "${files[@]}"; do
+            h="$(sha256sum "$f" | awk '{print $1}')"
+            echo "$h  $f" >> "$out_file"
+          done
+          echo "Wrote: $out_file"
+
+      - name: Print bundle tree on Windows failure
+        if: failure() && matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          Write-Host "Dumping src-tauri/target/release/bundle tree (Windows)"
+          Get-ChildItem -Path "src-tauri/target/release/bundle" -Recurse -ErrorAction SilentlyContinue
+
+      - name: Print bundle tree on macOS failure
+        if: failure() && matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          echo "Dumping src-tauri/target/release/bundle tree (macOS)"
+          ls -laR src-tauri/target/release/bundle || true
+
       - name: Upload zipped installers to GitHub Release
         if: matrix.platform == 'windows-latest' || matrix.platform == 'macos-latest'
         uses: softprops/action-gh-release@v2
@@ -150,6 +251,15 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           files: |
             dist-release/*.zip
+            dist-release/SHA256SUMS-*.txt
+
+      - name: Upload Linux checksums to GitHub Release
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          files: |
+            dist-release/SHA256SUMS-linux.txt
 
   # 独立 job：仅构建 Linux headless agent 并上传 Release，不使用 Node / 不与桌面矩阵共用 runner。
   # 使用 ubuntu-22.04（较旧 glibc）而非 24.04，避免产物要求 GLIBC_2.38+ 导致在旧版无 GUI Linux 上无法运行。
@@ -162,6 +272,19 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+
+      - name: Check version consistency
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\(.*\)",/\1/p' package.json | head -n 1)"
+          TAURI_VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\(.*\)",/\1/p' src-tauri/tauri.conf.json | head -n 1)"
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -n 1)"
+          echo "package.json: $PACKAGE_VERSION"
+          echo "Cargo.toml:  $CARGO_VERSION"
+          echo "tauri.conf:  $TAURI_VERSION"
+          test "$PACKAGE_VERSION" = "$CARGO_VERSION"
+          test "$PACKAGE_VERSION" = "$TAURI_VERSION"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -211,3 +334,22 @@ jobs:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
           files: |
             dist-agent/network-watch-agent-*.tar.gz
+
+      - name: Generate SHA256SUMS (Linux agent)
+        shell: bash
+        run: |
+          set -euo pipefail
+          out_file="dist-agent/SHA256SUMS-agent-linux.txt"
+          rm -f "$out_file"
+          for f in dist-agent/network-watch-agent-*.tar.gz; do
+            h="$(sha256sum "$f" | awk '{print $1}')"
+            echo "$h  $f" >> "$out_file"
+          done
+          echo "Wrote: $out_file"
+
+      - name: Upload agent checksums to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag_name || github.ref_name }}
+          files: |
+            dist-agent/SHA256SUMS-agent-linux.txt

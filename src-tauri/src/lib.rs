@@ -24,6 +24,8 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[cfg(feature = "desktop")]
 use desktop::diagnostics::get_runtime_diagnostics;
 #[cfg(feature = "desktop")]
+use desktop::diagnostics::export_diagnostics_report;
+#[cfg(feature = "desktop")]
 use desktop::overlay::set_overlay_interactive;
 #[cfg(all(feature = "desktop", target_os = "windows"))]
 use desktop::overlay::set_click_through_enabled;
@@ -296,6 +298,7 @@ struct GuiNodeTarget {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
 struct CapabilityResponse {
+    #[allow(dead_code)]
     machine_id: Option<String>,
     role: String,
     ingest_url: String,
@@ -453,8 +456,16 @@ fn start_gui_to_gui_relay(machine_id: String, latest: core::web_server::LatestSn
         });
     }
 
+    fn backoff_secs(failures: u32, max_secs: u64) -> u64 {
+        let shift = std::cmp::min(6, failures) as u32;
+        let exp = 1_u64 << shift; // 1,2,4,8,16,32,64
+        std::cmp::min(max_secs, exp)
+    }
+
     // 推送线程：按周期将本机最新采样推送给发现到的 GUI 节点。
-    thread::spawn(move || loop {
+    thread::spawn(move || {
+        let mut consecutive_failures: u32 = 0;
+        loop {
         let snapshot = latest.0.blocking_read().clone();
         let Some(snapshot) = snapshot else {
             thread::sleep(Duration::from_secs(push_interval_secs));
@@ -464,6 +475,8 @@ fn start_gui_to_gui_relay(machine_id: String, latest: core::web_server::LatestSn
         let body = serde_json::json!({
             "machine_id": &machine_id,
             "sender_role": "desktop_gui",
+            "origin_machine_id": &machine_id,
+            "hop_count": 0,
             "host_name": &host_name,
             "host_ips": &host_ips,
             "label": &label,
@@ -484,11 +497,18 @@ fn start_gui_to_gui_relay(machine_id: String, latest: core::web_server::LatestSn
 
         for url in targets {
             if let Err(err) = http_client.post(&url).json(&body).send() {
-                eprintln!("[gui-relay] push failed {url}: {err}");
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                if consecutive_failures == 1 || consecutive_failures == 5 || consecutive_failures % 20 == 0 {
+                    eprintln!("[gui-relay] push failed ({consecutive_failures}): {url}: {err}");
+                }
+            } else {
+                consecutive_failures = 0;
             }
         }
 
-        thread::sleep(Duration::from_secs(push_interval_secs));
+        let extra = if consecutive_failures == 0 { 0 } else { backoff_secs(consecutive_failures, 30) };
+        thread::sleep(Duration::from_secs(push_interval_secs + extra));
+      }
     });
 }
 
@@ -586,6 +606,7 @@ pub fn run() {
             get_machine_history,
             get_host_events,
             get_runtime_diagnostics,
+            export_diagnostics_report,
             #[cfg(target_os = "windows")]
             set_click_through_enabled
         ])
@@ -830,6 +851,13 @@ fn run_agent_mode() {
     eprintln!(
         "[agent] started. machine_id={machine_id}, discovery_port={discovery_port}, capability_path={capability_path}"
     );
+    fn backoff_secs(failures: u32, max_secs: u64) -> u64 {
+        let shift = std::cmp::min(6, failures) as u32;
+        let exp = 1_u64 << shift;
+        std::cmp::min(max_secs, exp)
+    }
+
+    let mut consecutive_push_failures: u32 = 0;
     loop {
         let Ok(snapshot) = rx.recv() else {
             break;
@@ -844,6 +872,8 @@ fn run_agent_mode() {
         let body = serde_json::json!({
             "machine_id": &machine_id,
             "sender_role": "agent",
+            "origin_machine_id": &machine_id,
+            "hop_count": 0,
             "host_name": &host_name,
             "host_ips": &host_ips,
             "label": &label,
@@ -865,8 +895,19 @@ fn run_agent_mode() {
 
         for url in targets {
             if let Err(err) = http_client.post(&url).json(&body).send() {
-                eprintln!("[agent] push failed {url}: {err}");
+                consecutive_push_failures = consecutive_push_failures.saturating_add(1);
+                if consecutive_push_failures == 1
+                    || consecutive_push_failures == 5
+                    || consecutive_push_failures % 20 == 0
+                {
+                    eprintln!("[agent] push failed ({consecutive_push_failures}): {url}: {err}");
+                }
+            } else {
+                consecutive_push_failures = 0;
             }
+        }
+        if consecutive_push_failures > 0 {
+            thread::sleep(Duration::from_secs(backoff_secs(consecutive_push_failures, 30)));
         }
     }
 }

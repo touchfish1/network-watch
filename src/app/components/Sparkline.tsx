@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import { LineChart } from "echarts/charts";
+import { GridComponent, TooltipComponent } from "echarts/components";
+import { CanvasRenderer } from "echarts/renderers";
+import { type ECharts, init, use } from "echarts/core";
+
+use([LineChart, GridComponent, TooltipComponent, CanvasRenderer]);
 
 /**
  * 迷你趋势线（0~N 点）。
@@ -13,13 +18,13 @@ type SparklineProps = {
 
 export function Sparkline({ values, tone }: SparklineProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const chartRef = useRef<echarts.ECharts | null>(null);
+  const chartRef = useRef<ECharts | null>(null);
 
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
 
-    const chart = echarts.init(el, undefined, { renderer: "canvas" });
+    const chart = init(el, undefined, { renderer: "canvas" });
     chartRef.current = chart;
 
     const resize = () => chart.resize();

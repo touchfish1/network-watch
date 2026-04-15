@@ -7,6 +7,7 @@ import type { AlertRecord, HistorySummary, QuotaRuntime } from "../../types";
 import type { AlertSettings, NicPreference, QuotaSettings, UpdatePollIntervalMinutes } from "../../config/settings";
 import { AlertSummaryCard } from "./AlertSummaryCard";
 import { HistorySummaryCard } from "./HistorySummaryCard";
+import { exportDiagnosticsReport } from "../../tauri";
 
 type ControlCenterSettingsModalProps = {
   open: boolean;
@@ -72,6 +73,7 @@ export function ControlCenterSettingsModal({
   setHostStaleThresholdMs,
 }: ControlCenterSettingsModalProps) {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("overview");
+  const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
 
   const setTab = useCallback((tab: SettingsTab) => {
     setSettingsTab(tab);
@@ -134,6 +136,42 @@ export function ControlCenterSettingsModal({
           <div className="settings-modal-content">
             {settingsTab === "overview" ? (
               <>
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
+                      <span className="settings-label">诊断</span>
+                      <strong>导出排障信息</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className={`settings-option ${diagnosticsBusy ? "settings-option-active" : ""}`}
+                      disabled={diagnosticsBusy}
+                      onClick={async () => {
+                        try {
+                          setDiagnosticsBusy(true);
+                          const path = await exportDiagnosticsReport(10);
+                          if (navigator.clipboard?.writeText) {
+                            await navigator.clipboard.writeText(path);
+                          }
+                          window.alert(`诊断报告已导出：\n${path}\n\n（路径已复制到剪贴板）`);
+                        } catch (err) {
+                          window.alert(`导出失败：${String(err)}`);
+                        } finally {
+                          setDiagnosticsBusy(false);
+                        }
+                      }}
+                    >
+                      {diagnosticsBusy ? "导出中…" : "导出最近10分钟"}
+                    </button>
+                  </div>
+                  <div className="kv-table">
+                    <div className="kv-row">
+                      <span className="kv-key">用途</span>
+                      <span className="kv-value">包含版本/配置/最近事件（不含快照原文）</span>
+                    </div>
+                  </div>
+                </article>
+
                 <article className="settings-card">
                   <div className="settings-card-header">
                     <div>
