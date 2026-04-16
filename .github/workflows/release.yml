@@ -51,7 +51,7 @@ jobs:
           - platform: windows-latest
             args: --features agent
           - platform: ubuntu-22.04
-            args: --features agent
+            args: --features agent --bundles deb,rpm
           - platform: macos-latest
             args: --features agent
     runs-on: ${{ matrix.platform }}
