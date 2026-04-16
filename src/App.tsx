@@ -394,7 +394,8 @@ function App() {
     snapshot,
     history,
     collapsedHeight,
-    collapsedWidth,
+    effectiveCollapsedWidth,
+    miniDockSide,
     statusTextRef,
     handleCollapsedPointerDown,
     handleCollapsedPointerMove,
@@ -563,7 +564,8 @@ function App() {
         <StatusStrip
           expanded={expanded}
           collapsedHeight={collapsedHeight}
-          collapsedWidth={collapsedWidth}
+          collapsedWidth={effectiveCollapsedWidth}
+          miniDockSide={miniDockSide}
           statusTextRef={statusTextRef}
           onPointerDown={handleCollapsedPointerDown}
           onPointerMove={(event) => void handleCollapsedPointerMove(event)}

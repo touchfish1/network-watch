@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 
-import { LogicalSize, getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
+import { LogicalSize, availableMonitors, getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 
 import {
@@ -38,6 +38,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const [collapsedHeight, setCollapsedHeight] = useState(FALLBACK_COLLAPSED_HEIGHT);
   const [collapsedWidth, setCollapsedWidth] = useState(() => loadCollapsedWidth());
   const [expandedSize, setExpandedSize] = useState(() => loadExpandedSize());
+  const [miniDockSide, setMiniDockSide] = useState<"left" | "right" | null>(null);
 
   const [snapshot, setSnapshot] = useState<SystemSnapshot>(emptySnapshot);
   const [history, setHistory] = useState<MetricHistory>(emptyHistory);
@@ -47,6 +48,109 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
   const statusTextRef = useRef<HTMLDivElement | null>(null);
   // 收起态“点击切换 / 拖拽移动”交互由子 hook 管理
 
+  const isWindowsEnv = useMemo(() => /windows/i.test(navigator.userAgent), []);
+  const MINI_COLLAPSED_WIDTH = 96;
+  const MINI_EDGE_THRESHOLD = 18;
+
+  const effectiveCollapsedWidth = isWindowsEnv && miniDockSide ? MINI_COLLAPSED_WIDTH : collapsedWidth;
+
+  const safeGetWindowCenterMonitor = useEffectEvent(async () => {
+    if (!appWindow) {
+      return null;
+    }
+    try {
+      const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
+      const centerX = position.x + size.width / 2;
+      const centerY = position.y + size.height / 2;
+      const fromPoint = await monitorFromPoint(centerX, centerY);
+      if (fromPoint) {
+        return fromPoint;
+      }
+      // Windows 在任务栏/边界附近可能拿不到 monitorFromPoint：退化为“最接近 window center 的显示器”。
+      const monitors = await availableMonitors();
+      if (!monitors || monitors.length === 0) {
+        return null;
+      }
+      let best = monitors[0];
+      let bestDist = Number.POSITIVE_INFINITY;
+      for (const m of monitors) {
+        const mx = m.position.x + m.size.width / 2;
+        const my = m.position.y + m.size.height / 2;
+        const dx = mx - centerX;
+        const dy = my - centerY;
+        const dist = dx * dx + dy * dy;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = m;
+        }
+      }
+      return best;
+    } catch {
+      return null;
+    }
+  });
+
+  const updateWindowsMiniDock = useEffectEvent(async () => {
+    if (!appWindow) {
+      return;
+    }
+    if (!isWindowsEnv) {
+      return;
+    }
+    if (expanded) {
+      if (miniDockSide) {
+        setMiniDockSide(null);
+      }
+      return;
+    }
+    try {
+      const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
+      const monitor = await safeGetWindowCenterMonitor();
+      if (!monitor) {
+        if (miniDockSide) {
+          setMiniDockSide(null);
+        }
+        return;
+      }
+
+      const leftDist = position.x - monitor.position.x;
+      const rightDist = monitor.position.x + monitor.size.width - (position.x + size.width);
+
+      const nextSide =
+        leftDist <= MINI_EDGE_THRESHOLD ? "left" : rightDist <= MINI_EDGE_THRESHOLD ? "right" : null;
+
+      if (nextSide === miniDockSide) {
+        return;
+      }
+
+      setMiniDockSide(nextSide);
+
+      // 进入/退出微型模式时同步窗口宽度，并在进入时贴边，避免出现“只有一部分在屏幕内”的状态。
+      const nextWidth = nextSide ? MINI_COLLAPSED_WIDTH : collapsedWidth;
+      const nextX =
+        nextSide === "left"
+          ? monitor.position.x
+          : nextSide === "right"
+            ? monitor.position.x + monitor.size.width - nextWidth
+            : position.x;
+
+      isProgrammaticLayoutRef.current = true;
+      try {
+        await applyWindowLayoutSafely(
+          appWindow,
+          { width: nextWidth, height: collapsedHeight, x: nextX, y: position.y },
+          isProgrammaticLayoutRef,
+        );
+      } finally {
+        window.setTimeout(() => {
+          isProgrammaticLayoutRef.current = false;
+        }, POSITION_SETTLE_DELAY);
+      }
+    } catch {
+      // ignore
+    }
+  });
+
   /**
    * 根据当前显示器的 taskbar/dock 厚度同步收起态高度，并在收起态时立即应用窗口尺寸。
    */
@@ -54,10 +158,22 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     if (!appWindow) {
       return;
     }
-    const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
-    const centerX = position.x + size.width / 2;
-    const centerY = position.y + size.height / 2;
-    const monitor = await monitorFromPoint(centerX, centerY);
+    // Windows：不再把收起态强行对齐任务栏高度（避免“不能拖到状态栏上”的隐式限制）。
+    if (isWindowsEnv) {
+      setCollapsedHeight((current) => (current === FALLBACK_COLLAPSED_HEIGHT ? current : FALLBACK_COLLAPSED_HEIGHT));
+      if (!expanded) {
+        isProgrammaticLayoutRef.current = true;
+        try {
+          await appWindow.setSize(new LogicalSize(effectiveCollapsedWidth, FALLBACK_COLLAPSED_HEIGHT));
+        } finally {
+          window.setTimeout(() => {
+            isProgrammaticLayoutRef.current = false;
+          }, POSITION_SETTLE_DELAY);
+        }
+      }
+      return;
+    }
+    const monitor = await safeGetWindowCenterMonitor();
     const nextCollapsedHeight = getTaskbarThickness(monitor);
 
     setCollapsedHeight((current) => (current === nextCollapsedHeight ? current : nextCollapsedHeight));
@@ -86,10 +202,12 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     if (!appWindow) {
       return;
     }
+    // Windows：取消自动吸附（由用户自由摆放）。
+    if (isWindowsEnv) {
+      return;
+    }
     const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
-    const centerX = position.x + size.width / 2;
-    const centerY = position.y + size.height / 2;
-    const monitor = await monitorFromPoint(centerX, centerY);
+    const monitor = await safeGetWindowCenterMonitor();
     const snappedPosition = getDockedPosition(position, size, monitor);
 
     if (!snappedPosition) {
@@ -106,7 +224,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       x: snappedPosition.x,
       y: snappedPosition.y,
     });
-  }, [appWindow, applyLayoutSafely]);
+  }, [appWindow, applyLayoutSafely, isWindowsEnv, safeGetWindowCenterMonitor]);
 
   /**
    * 接收来自后端的系统快照，并同步到 state，同时把 payload 透传给调用方以更新历史曲线。
@@ -126,6 +244,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     });
 
     void syncCollapsedHeight();
+    void updateWindowsMiniDock();
 
     let unlistenSnapshot: (() => void) | undefined;
     let unlistenMoved: (() => void) | undefined;
@@ -133,8 +252,12 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       void setOverlayInteractive(false).catch(() => {
         // ignore
       });
-      void syncCollapsedHeight();
-      void snapToWorkAreaEdge();
+      void syncCollapsedHeight().catch(() => {
+        // ignore
+      });
+      void snapToWorkAreaEdge().catch(() => {
+        // ignore
+      });
     };
     window.addEventListener("blur", handleWindowBlur);
 
@@ -155,8 +278,15 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
         }
 
         snapTimerRef.current = window.setTimeout(() => {
-          void syncCollapsedHeight();
-          void snapToWorkAreaEdge();
+          void syncCollapsedHeight().catch(() => {
+            // ignore
+          });
+          void snapToWorkAreaEdge().catch(() => {
+            // ignore
+          });
+          void updateWindowsMiniDock().catch(() => {
+            // ignore
+          });
         }, POSITION_SETTLE_DELAY);
       })
       .then((dispose) => {
@@ -172,7 +302,7 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       unlistenSnapshot?.();
       unlistenMoved?.();
     };
-  }, [appWindow, handleSnapshot, snapToWorkAreaEdge, syncCollapsedHeight]);
+  }, [appWindow, handleSnapshot, snapToWorkAreaEdge, syncCollapsedHeight, updateWindowsMiniDock]);
 
   useEffect(() => {
     saveCollapsedWidth(collapsedWidth);
@@ -189,13 +319,13 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
 
     if (!expanded) {
       isProgrammaticLayoutRef.current = true;
-      void appWindow.setSize(new LogicalSize(collapsedWidth, collapsedHeight)).finally(() => {
+      void appWindow.setSize(new LogicalSize(effectiveCollapsedWidth, collapsedHeight)).finally(() => {
         window.setTimeout(() => {
           isProgrammaticLayoutRef.current = false;
         }, POSITION_SETTLE_DELAY);
       });
     }
-  }, [appWindow, collapsedHeight, collapsedWidth, expanded, snapshot]);
+  }, [appWindow, collapsedHeight, effectiveCollapsedWidth, expanded, snapshot]);
 
   const toggleExpanded = async () => {
     if (!appWindow) {
@@ -203,50 +333,53 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
       return;
     }
 
-    const nextExpanded = !expanded;
-    const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
-    const centerX = position.x + size.width / 2;
-    const centerY = position.y + size.height / 2;
-    const monitor = await monitorFromPoint(centerX, centerY);
+    try {
+      const nextExpanded = !expanded;
+      const [position, size] = await Promise.all([appWindow.outerPosition(), appWindow.outerSize()]);
+      const monitor = await safeGetWindowCenterMonitor();
 
-    const nextWidth = nextExpanded ? expandedSize.width : collapsedWidth;
-    const nextHeight = nextExpanded ? expandedSize.height : collapsedHeight;
-    const currentBottom = position.y + size.height;
+      const nextWidth = nextExpanded ? expandedSize.width : collapsedWidth;
+      const nextHeight = nextExpanded ? expandedSize.height : collapsedHeight;
+      const currentBottom = position.y + size.height;
 
-    const expansionPlan = nextExpanded
-      ? getAnchoredExpandedPosition(
-          position,
-          { width: size.width, height: size.height },
-          { width: nextWidth, height: nextHeight },
-          monitor,
-        )
-      : {
-          position: {
-            x: position.x,
-            y: expansionDirection === "up" ? currentBottom - nextHeight : position.y,
-          },
-          direction: expansionDirection,
-        };
+      const expansionPlan = nextExpanded
+        ? getAnchoredExpandedPosition(
+            position,
+            { width: size.width, height: size.height },
+            { width: nextWidth, height: nextHeight },
+            monitor,
+          )
+        : {
+            position: {
+              x: position.x,
+              y: expansionDirection === "up" ? currentBottom - nextHeight : position.y,
+            },
+            direction: expansionDirection,
+          };
 
-    if (nextExpanded) {
-      await setOverlayInteractive(true);
-    }
+      if (nextExpanded) {
+        await setOverlayInteractive(true);
+      }
 
-    setExpanded(nextExpanded);
-    if (nextExpanded) {
-      setExpansionDirection(expansionPlan.direction as ExpansionDirection);
-    }
+      setExpanded(nextExpanded);
+      if (nextExpanded) {
+        setExpansionDirection(expansionPlan.direction as ExpansionDirection);
+      }
 
-    await applyLayoutSafely({
-      width: nextWidth,
-      height: nextHeight,
-      x: expansionPlan.position.x,
-      y: expansionPlan.position.y,
-    });
+      await applyLayoutSafely({
+        width: nextWidth,
+        height: nextHeight,
+        x: expansionPlan.position.x,
+        y: expansionPlan.position.y,
+      });
 
-    if (!nextExpanded) {
-      await setOverlayInteractive(false);
-      await snapToWorkAreaEdge();
+      if (!nextExpanded) {
+        await setOverlayInteractive(false);
+        await snapToWorkAreaEdge();
+        await updateWindowsMiniDock();
+      }
+    } catch {
+      // 任何窗口 API 异常都不应导致悬浮窗白屏；直接忽略这次布局切换。
     }
   };
 
@@ -305,6 +438,8 @@ export function useWindowLayout({ isTauriEnv, emptySnapshot, emptyHistory, onSna
     expansionDirection,
     collapsedHeight,
     collapsedWidth,
+    effectiveCollapsedWidth,
+    miniDockSide,
     expandedSize,
     snapshot,
     history,
