@@ -21,6 +21,8 @@ use crate::desktop::{constants, windowing};
 use crate::desktop::win::click_through_bus;
 #[cfg(target_os = "windows")]
 use crate::desktop::{overlay, state};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use crate::core::sampler::SystemSnapshot;
 
 /// 创建托盘与菜单，并绑定事件处理。
 ///
@@ -146,5 +148,49 @@ fn toggle_autostart<R: tauri::Runtime>(app: &AppHandle<R>, autostart_item: &Chec
     }
 
     let _ = autostart_item.set_checked(next_enabled);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn format_rate(bytes_per_sec: u64) -> String {
+    const UNITS: [&str; 4] = ["B/s", "KB/s", "MB/s", "GB/s"];
+    let mut value = bytes_per_sec as f64;
+    let mut idx = 0usize;
+    while value >= 1024.0 && idx + 1 < UNITS.len() {
+        value /= 1024.0;
+        idx += 1;
+    }
+    if idx == 0 {
+        format!("{value:.0} {}", UNITS[idx])
+    } else {
+        format!("{value:.1} {}", UNITS[idx])
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn metrics_text(snapshot: &SystemSnapshot) -> String {
+    let cpu = snapshot.cpu_usage.clamp(0.0, 999.0);
+    let down = format_rate(snapshot.network_download);
+    let up = format_rate(snapshot.network_upload);
+    format!("CPU {cpu:>4.1}%  D {down}  U {up}")
+}
+
+/// 在 Linux/macOS 托盘显示实时指标：
+/// - macOS: 状态栏标题（可直接看到数值）
+/// - Linux: tooltip（鼠标悬停可看到数值）
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn update_tray_metrics<R: tauri::Runtime>(app: &AppHandle<R>, snapshot: &SystemSnapshot) {
+    let Some(tray) = app.tray_by_id("main") else {
+        return;
+    };
+    let text = metrics_text(snapshot);
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = tray.set_title(Some(&text));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = tray.set_tooltip(Some(&text));
+    }
 }
 

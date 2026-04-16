@@ -137,6 +137,8 @@ pub fn start_sampler(app: AppHandle) {
     let options = SamplingOptions::desktop_defaults();
     run_sampling_loop_with_options(options, move |snapshot| {
         state::record_snapshot(snapshot.timestamp);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        crate::desktop::tray::update_tray_metrics(&app, &snapshot);
         // 供 Web API 读取
         if let Some(latest) = app.try_state::<LatestSnapshot>() {
             // 不阻塞采样线程：尝试写入；失败则忽略
