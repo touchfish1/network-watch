@@ -8,9 +8,10 @@ type HistorySummaryCardProps = {
     downloadPerMinute: number[];
     uploadPerMinute: number[];
   };
+  lowLoadMode?: boolean;
 };
 
-export function HistorySummaryCard({ historySummary, series }: HistorySummaryCardProps) {
+export function HistorySummaryCard({ historySummary, series, lowLoadMode = false }: HistorySummaryCardProps) {
   return (
     <article className="settings-card history-card">
       <div className="settings-card-header">
@@ -21,8 +22,8 @@ export function HistorySummaryCard({ historySummary, series }: HistorySummaryCar
         <span className="theme-current">{historySummary.sampleCount} 分钟桶</span>
       </div>
       <div className="network-lines">
-        <Sparkline values={series.downloadPerMinute} tone="download" />
-        <Sparkline values={series.uploadPerMinute} tone="upload" />
+        <Sparkline values={series.downloadPerMinute} tone="download" lowLoadMode={lowLoadMode} />
+        <Sparkline values={series.uploadPerMinute} tone="upload" lowLoadMode={lowLoadMode} />
       </div>
       <div className="kv-table kv-table-secondary">
         <div className="kv-row">

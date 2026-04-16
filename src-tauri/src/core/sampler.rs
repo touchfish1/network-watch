@@ -134,7 +134,8 @@ pub struct SystemSnapshot {
 /// - **线程模型**：后台线程每秒采样一次并 emit\n+/// - **失败策略**：尽量不 panic；emit 失败会被忽略（前端可能未监听/窗口未就绪）\n+/// - **性能**：使用 `new_with_specifics` 只刷新需要的子系统，避免不必要开销
 #[cfg(feature = "desktop")]
 pub fn start_sampler(app: AppHandle) {
-    run_sampling_loop(move |snapshot| {
+    let options = SamplingOptions::desktop_defaults();
+    run_sampling_loop_with_options(options, move |snapshot| {
         state::record_snapshot(snapshot.timestamp);
         // 供 Web API 读取
         if let Some(latest) = app.try_state::<LatestSnapshot>() {
@@ -158,10 +159,56 @@ pub fn start_headless_sampler<F>(on_snapshot: F)
 where
     F: FnMut(SystemSnapshot) + Send + 'static,
 {
-    run_sampling_loop(on_snapshot);
+    let options = SamplingOptions::headless_defaults();
+    run_sampling_loop_with_options(options, on_snapshot);
 }
 
-fn run_sampling_loop<F>(mut on_snapshot: F)
+#[derive(Clone, Copy)]
+struct SamplingOptions {
+    sample_interval_ms: u64,
+    process_refresh_every_ticks: u64,
+    disk_refresh_every_ticks: u64,
+}
+
+impl SamplingOptions {
+    fn desktop_defaults() -> Self {
+        Self {
+            sample_interval_ms: 1000,
+            process_refresh_every_ticks: 1,
+            disk_refresh_every_ticks: 1,
+        }
+    }
+
+    fn headless_defaults() -> Self {
+        let sample_ms = env_u64("NETWORK_WATCH_AGENT_SAMPLE_MS", 1000).clamp(500, 10_000);
+        let process_secs = env_u64("NETWORK_WATCH_AGENT_PROCESS_REFRESH_SECS", 5).clamp(1, 60);
+        let disk_secs = env_u64("NETWORK_WATCH_AGENT_DISK_REFRESH_SECS", 15).clamp(5, 300);
+        let process_ticks = process_secs
+            .saturating_mul(1000)
+            .checked_div(sample_ms)
+            .unwrap_or(1)
+            .max(1);
+        let disk_ticks = disk_secs
+            .saturating_mul(1000)
+            .checked_div(sample_ms)
+            .unwrap_or(1)
+            .max(1);
+        Self {
+            sample_interval_ms: sample_ms,
+            process_refresh_every_ticks: process_ticks,
+            disk_refresh_every_ticks: disk_ticks,
+        }
+    }
+}
+
+fn env_u64(key: &str, default_value: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(default_value)
+}
+
+fn run_sampling_loop_with_options<F>(options: SamplingOptions, mut on_snapshot: F)
 where
     F: FnMut(SystemSnapshot) + Send + 'static,
 {
@@ -174,13 +221,18 @@ where
         );
         let mut networks = Networks::new_with_refreshed_list();
         let mut disks = Disks::new_with_refreshed_list();
+        let mut tick: u64 = 0;
 
         loop {
             system.refresh_cpu_usage();
             system.refresh_memory();
-            system.refresh_processes(ProcessesToUpdate::All, true);
+            if tick % options.process_refresh_every_ticks == 0 {
+                system.refresh_processes(ProcessesToUpdate::All, true);
+            }
             networks.refresh(true);
-            disks.refresh(true);
+            if tick % options.disk_refresh_every_ticks == 0 {
+                disks.refresh(true);
+            }
 
             let cpu_usage = system.global_cpu_usage();
             let memory_used = system.used_memory();
@@ -299,7 +351,8 @@ where
             };
 
             on_snapshot(snapshot);
-            thread::sleep(Duration::from_secs(1));
+            tick = tick.wrapping_add(1);
+            thread::sleep(Duration::from_millis(options.sample_interval_ms));
         }
     });
 }

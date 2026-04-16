@@ -44,6 +44,8 @@ type ControlCenterSettingsModalProps = {
 
   hostStaleThresholdMs: number;
   setHostStaleThresholdMs: (ms: number) => void;
+  lowLoadMode: boolean;
+  setLowLoadMode: (enabled: boolean) => void;
 };
 
 type SettingsTab = "overview" | "alerts" | "quota" | "history";
@@ -71,6 +73,8 @@ export function ControlCenterSettingsModal({
   onMoveCard,
   hostStaleThresholdMs,
   setHostStaleThresholdMs,
+  lowLoadMode,
+  setLowLoadMode,
 }: ControlCenterSettingsModalProps) {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("overview");
   const [diagnosticsBusy, setDiagnosticsBusy] = useState(false);
@@ -276,6 +280,28 @@ export function ControlCenterSettingsModal({
                     </div>
                   </div>
                 </article>
+
+                <article className="settings-card">
+                  <div className="settings-card-header">
+                    <div>
+                      <span className="settings-label">性能</span>
+                      <strong>低负载模式</strong>
+                    </div>
+                    <button
+                      type="button"
+                      className={`settings-option ${lowLoadMode ? "settings-option-active" : ""}`}
+                      onClick={() => setLowLoadMode(!lowLoadMode)}
+                    >
+                      {lowLoadMode ? "已开启" : "已关闭"}
+                    </button>
+                  </div>
+                  <div className="kv-table">
+                    <div className="kv-row">
+                      <span className="kv-key">关闭趋势图 tooltip，降低曲线渲染开销</span>
+                      <span className="kv-value">{lowLoadMode ? "节能优先" : "显示优先"}</span>
+                    </div>
+                  </div>
+                </article>
               </>
             ) : null}
 
@@ -447,7 +473,7 @@ export function ControlCenterSettingsModal({
 
             {settingsTab === "history" ? (
               <>
-                <HistorySummaryCard historySummary={historySummary} series={historySeries} />
+                <HistorySummaryCard historySummary={historySummary} series={historySeries} lowLoadMode={lowLoadMode} />
                 <article className="settings-card">
                   <div className="settings-card-header">
                     <div>

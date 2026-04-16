@@ -37,6 +37,7 @@ import { loadPinnedHostIds, savePinnedHostIds } from "../config/pinnedHosts";
 
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 const REMOTE_HISTORY_MAX_POINTS = 60;
+const LOW_LOAD_MODE_STORAGE_KEY = "network-watch-low-load-mode-v1";
 
 function pushHistoryValue(arr: number[], value: number, max: number) {
   const next = [...arr, value];
@@ -96,6 +97,7 @@ export function ControlCenter({
     return saved === "1" || saved === "true";
   });
   const [showSettingsPopover, setShowSettingsPopover] = useState(false);
+  const [lowLoadMode, setLowLoadModeState] = useState(() => window.localStorage.getItem(LOW_LOAD_MODE_STORAGE_KEY) === "1");
 
   /**
    * 与托盘「鼠标穿透」菜单同步：后端在任意路径变更穿透后会广播该事件。
@@ -141,6 +143,10 @@ export function ControlCenter({
   }, []);
   const closeSettingsPopover = useCallback(() => {
     setShowSettingsPopover(false);
+  }, []);
+  const setLowLoadMode = useCallback((enabled: boolean) => {
+    setLowLoadModeState(enabled);
+    window.localStorage.setItem(LOW_LOAD_MODE_STORAGE_KEY, enabled ? "1" : "0");
   }, []);
 
   const [cardOrder, setCardOrder] = useState<CardId[]>(() => loadCardOrder());
@@ -381,7 +387,7 @@ export function ControlCenter({
       />
     ),
     alerts: () => <AlertSummaryCard alertRecords={alertRecords} quotaRuntime={quotaRuntime} />,
-    history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} />,
+    history: () => <HistorySummaryCard historySummary={historySummary} series={historySeries} lowLoadMode={lowLoadMode} />,
     connections: () => <ConnectionsCard connections={(displaySnapshot as any).connections} />,
     nic: () => (
       <NicCard
@@ -505,6 +511,8 @@ export function ControlCenter({
         onMoveCard={moveCard}
         hostStaleThresholdMs={hostStaleThresholdMs}
         setHostStaleThresholdMs={updateHostStaleThresholdMs}
+        lowLoadMode={lowLoadMode}
+        setLowLoadMode={setLowLoadMode}
       />
       <UpdateModal
         open={showUpdateModal}
@@ -538,7 +546,7 @@ export function ControlCenter({
             <span>CPU 趋势</span>
             <strong>{formatPercent((displaySnapshot as any).cpu_usage ?? 0)}</strong>
           </div>
-          <Sparkline values={displayHistory.cpu} tone="cpu" />
+          <Sparkline values={displayHistory.cpu} tone="cpu" lowLoadMode={lowLoadMode} />
         </div>
         <div className="detail-card">
           <div className="detail-header">
@@ -550,7 +558,7 @@ export function ControlCenter({
               )}
             </strong>
           </div>
-          <Sparkline values={displayHistory.memory} tone="memory" />
+          <Sparkline values={displayHistory.memory} tone="memory" lowLoadMode={lowLoadMode} />
         </div>
         <div className="detail-card detail-card-wide">
           <div className="detail-header">
@@ -560,8 +568,8 @@ export function ControlCenter({
             </strong>
           </div>
           <div className="network-lines">
-            <Sparkline values={displayHistory.download} tone="download" />
-            <Sparkline values={displayHistory.upload} tone="upload" />
+            <Sparkline values={displayHistory.download} tone="download" lowLoadMode={lowLoadMode} />
+            <Sparkline values={displayHistory.upload} tone="upload" lowLoadMode={lowLoadMode} />
           </div>
         </div>
       </div>
