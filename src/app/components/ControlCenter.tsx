@@ -38,6 +38,10 @@ import { loadPinnedHostIds, savePinnedHostIds } from "../config/pinnedHosts";
 const DEFAULT_WEB_MONITOR_URL = "http://127.0.0.1:17321/";
 const REMOTE_HISTORY_MAX_POINTS = 60;
 const LOW_LOAD_MODE_STORAGE_KEY = "network-watch-low-load-mode-v1";
+const WEB_HEALTH_PATH = "/api/v1/health";
+const WEB_HEALTH_RETRY_WINDOW_MS = 5000;
+const WEB_HEALTH_RETRY_INTERVAL_MS = 500;
+const WEB_HEALTH_REQUEST_TIMEOUT_MS = 800;
 
 function pushHistoryValue(arr: number[], value: number, max: number) {
   const next = [...arr, value];
@@ -49,6 +53,50 @@ function pushHistoryValue(arr: number[], value: number, max: number) {
 
 function buildEmptyHistory(): MetricHistory {
   return { cpu: [], memory: [], download: [], upload: [] };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function buildHealthCheckUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    parsed.pathname = WEB_HEALTH_PATH;
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function checkWebHealthWithRetry(url: string): Promise<boolean> {
+  const healthUrl = buildHealthCheckUrl(url);
+  if (!healthUrl) {
+    return false;
+  }
+  const deadline = Date.now() + WEB_HEALTH_RETRY_WINDOW_MS;
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), WEB_HEALTH_REQUEST_TIMEOUT_MS);
+    try {
+      const response = await fetch(healthUrl, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // ignore and retry until deadline
+    } finally {
+      window.clearTimeout(timeout);
+    }
+    await sleep(WEB_HEALTH_RETRY_INTERVAL_MS);
+  }
+  return false;
 }
 
 /**
@@ -360,11 +408,12 @@ export function ControlCenter({
       // ignore
     });
   }, [displayWebUrl]);
-  const openWebUrl = useCallback(() => {
+  const openWebUrl = useCallback(async () => {
     const url = displayWebUrl || DEFAULT_WEB_MONITOR_URL;
     if (!url) {
       return;
     }
+    await checkWebHealthWithRetry(url);
     if (isTauri()) {
       void openUrl(url).catch(() => {
         window.open(url, "_blank", "noopener,noreferrer");
